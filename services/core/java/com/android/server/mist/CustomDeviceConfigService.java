@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-package com.android.server.lunaris;
+package com.android.server.mist;
 
 import android.content.Context;
 import com.android.server.SystemService;
