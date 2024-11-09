@@ -75,13 +75,13 @@ import com.android.systemui.statusbar.connectivity.SignalCallback;
 import com.android.systemui.statusbar.connectivity.MobileDataIndicators;
 import com.android.systemui.statusbar.connectivity.WifiIndicators;
 import com.android.systemui.util.MediaSessionManagerHelper;
-import com.android.internal.util.lunaris.VibrationUtils;
+import com.android.internal.util.mist.VibrationUtils;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-import com.android.internal.util.lunaris.OmniJawsClient;
+import com.android.internal.util.mist.OmniJawsClient;
 
 public class LockScreenWidgetsController implements OmniJawsClient.OmniJawsObserver, MediaSessionManagerHelper.MediaMetadataListener {
 
