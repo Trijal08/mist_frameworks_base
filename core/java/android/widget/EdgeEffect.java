@@ -45,7 +45,7 @@ import android.view.animation.Interpolator;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 
-import com.android.internal.util.lunaris.VibrationUtils;
+import com.android.internal.util.mist.VibrationUtils;
 
 /**
  * This class performs the graphical effect used at the edges of scrollable widgets
