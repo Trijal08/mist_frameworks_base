@@ -7,7 +7,7 @@ import android.provider.Settings;
 import android.util.KeyValueListParser;
 import android.util.Log;
 
-import com.android.internal.util.lunaris.Utils;
+import com.android.internal.util.mist.Utils;
 import com.android.settingslib.fuelgauge.Estimate;
 import com.android.settingslib.utils.PowerUtil;
 import com.android.systemui.dagger.SysUISingleton;

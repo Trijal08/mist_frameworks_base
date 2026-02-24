@@ -67,7 +67,7 @@
             systemui:isStatusBar="true"
         />
 
-        <com.android.systemui.lunaris.logo.LogoImageViewRight
+        <com.android.systemui.mist.logo.LogoImageViewRight
             android:id="@+id/statusbar_logo_right"
             android:layout_width="wrap_content"
             android:layout_height="match_parent"
