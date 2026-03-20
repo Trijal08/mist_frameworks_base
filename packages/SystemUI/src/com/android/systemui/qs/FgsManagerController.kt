@@ -727,6 +727,11 @@ constructor(
             private set
 
         fun updateUiControl() {
+            if (packageName == "com.oneplus.camera") {
+                uiControl = UIControl.HIDE_ENTRY
+                uiControlInitialized = true
+                return
+            }
             backgroundRestrictionExemptionReason =
                 activityManager.getBackgroundRestrictionExemptionReason(uid)
             uiControl =
