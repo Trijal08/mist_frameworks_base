@@ -303,8 +303,46 @@ public final class CameraManager {
      */
     @NonNull
     public String[] getCameraIdList() throws CameraAccessException {
-        return CameraManagerGlobal.get().getCameraIdList(mContext.getDeviceId(),
+        String[] ids = CameraManagerGlobal.get().getCameraIdList(mContext.getDeviceId(),
                 getDevicePolicyFromContext(mContext));
+
+    /**
+     * Custom Camera Filter:
+     * Reads the system property "ro.vendor.camera.id.blocklist" to selectively hide 
+     * specific camera IDs from specific applications. This allows device maintainers 
+     * to prevent apps from accessing auxiliary cameras that may cause crashes or 
+     * improper behavior, without hardcoding package names in the framework.
+     *
+     * Configuration Format (in system.prop): package_name=camera_id
+     * Multiple rules are separated by commas.
+     * Example: com.example.app=3,com.video.chat=4
+     */
+     String blocklistProp = android.os.SystemProperties.get("ro.vendor.camera.id.blocklist", "");
+
+        if (!blocklistProp.isEmpty()) {
+            String packageName = android.app.ActivityThread.currentOpPackageName();
+            if (packageName != null) {
+                java.util.Set<String> idsToHide = new java.util.HashSet<>();
+                for (String config : blocklistProp.split(",")) {
+                    String[] parts = config.split("=");
+                    if (parts.length == 2 && packageName.contains(parts[0].trim())) {
+                        idsToHide.add(parts[1].trim());
+                    }
+                }
+
+                if (!idsToHide.isEmpty()) {
+                    java.util.List<String> filteredList = new java.util.ArrayList<>();
+                    for (String id : ids) {
+                        if (!idsToHide.contains(id)) {
+                            filteredList.add(id);
+                        }
+                    }
+                    return filteredList.toArray(new String[0]);
+                }
+            }
+        }
+
+        return ids;
     }
 
     /**
