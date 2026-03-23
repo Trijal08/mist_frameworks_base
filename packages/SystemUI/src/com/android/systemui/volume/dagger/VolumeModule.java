@@ -38,6 +38,7 @@ import com.android.systemui.util.settings.SecureSettings;
 import com.android.systemui.util.time.SystemClock;
 import com.android.systemui.axion.volume.AxionVolumeDialogPlugin;
 import com.android.systemui.axion.volume.dagger.AxionVolumeSubcomponentModule;
+import com.android.systemui.mist.volume.IosVolumeDialogPlugin;
 import com.android.systemui.volume.CsdWarningDialog;
 import com.android.systemui.volume.VolumeComponent;
 import com.android.systemui.volume.VolumeDialogComponent;
@@ -118,6 +119,7 @@ public interface VolumeModule {
     static VolumeDialog provideVolumeDialog(
             Lazy<AxionVolumeDialogPlugin> axionVolumeDialogPlugin,
             Lazy<VolumeDialogPlugin> volumeDialogProvider,
+            Lazy<IosVolumeDialogPlugin> iosVolumeDialogPlugin,
             Context context,
             VolumeDialogController volumeDialogController,
             AccessibilityManagerWrapper accessibilityManagerWrapper,
@@ -144,6 +146,8 @@ public interface VolumeModule {
                 return axionVolumeDialogPlugin.get();
             case 1:
                 return volumeDialogProvider.get();
+            case 3:
+                return iosVolumeDialogPlugin.get();
             case 2:
             default:
                 VolumeDialogImpl impl = new VolumeDialogImpl(
