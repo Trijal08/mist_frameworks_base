@@ -25,8 +25,11 @@ import android.graphics.Path
 import android.graphics.PointF
 import android.graphics.Rect
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.Trace
 import android.os.UserHandle
+import android.provider.Settings
 import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
@@ -788,7 +791,29 @@ constructor(
                     }
                 val Media =
                     @Composable {
-                        if (viewModel.qqsMediaVisible) {
+                        val cr = LocalContext.current.contentResolver
+                        var stockMediaEnabled by remember {
+                            mutableStateOf(
+                                Settings.System.getIntForUser(
+                                    cr, "qs_stock_media_player", 1, UserHandle.USER_CURRENT
+                                ) == 1
+                            )
+                        }
+                        DisposableEffect(Unit) {
+                            val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+                                override fun onChange(selfChange: Boolean) {
+                                    stockMediaEnabled = Settings.System.getIntForUser(
+                                        cr, "qs_stock_media_player", 1, UserHandle.USER_CURRENT
+                                    ) == 1
+                                }
+                            }
+                            cr.registerContentObserver(
+                                Settings.System.getUriFor("qs_stock_media_player"), false, observer, UserHandle.USER_ALL
+                            )
+                            onDispose { cr.unregisterContentObserver(observer) }
+                        }
+
+                        if (stockMediaEnabled && viewModel.qqsMediaVisible) {
                             MediaObject(
                                 // In order to have stable constraints passed to the AndroidView
                                 // during expansion (available height changing due to squishiness),
@@ -930,13 +955,36 @@ constructor(
                             }
                         val Media =
                             @Composable {
-                                if (viewModel.qsMediaVisible) {
+                                val cr = LocalContext.current.contentResolver
+                                var stockMediaEnabled by remember {
+                                    mutableStateOf(
+                                        Settings.System.getIntForUser(
+                                            cr, "qs_stock_media_player", 1, UserHandle.USER_CURRENT
+                                        ) == 1
+                                    )
+                                }
+                                DisposableEffect(Unit) {
+                                    val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+                                        override fun onChange(selfChange: Boolean) {
+                                            stockMediaEnabled = Settings.System.getIntForUser(
+                                                cr, "qs_stock_media_player", 1, UserHandle.USER_CURRENT
+                                            ) == 1
+                                        }
+                                    }
+                                    cr.registerContentObserver(
+                                        Settings.System.getUriFor("qs_stock_media_player"), false, observer, UserHandle.USER_ALL
+                                    )
+                                    onDispose { cr.unregisterContentObserver(observer) }
+                                }
+
+                                if (stockMediaEnabled && viewModel.qsMediaVisible) {
                                     MediaObject(
+                                        modifier = Modifier.requiredHeightIn(max = Dp.Infinity),
                                         mediaHost = viewModel.qsMediaHost,
                                         mediaLogger = mediaLogger,
-                                        mediaViewModelFactory = viewModel.mediaViewModelFactory,
                                         mediaPresentationStyle = MediaPresentationStyle.Default,
                                         onSwipeToDismiss = viewModel::onMediaSwipeToDismiss,
+                                        mediaViewModelFactory = viewModel.mediaViewModelFactory,
                                         behavior = viewModel.qsMediaUiBehavior,
                                         update = { translationY = viewModel.qsMediaTranslationY },
                                     )
