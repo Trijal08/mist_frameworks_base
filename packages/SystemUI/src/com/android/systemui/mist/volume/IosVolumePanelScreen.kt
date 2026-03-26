@@ -39,6 +39,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -90,19 +91,36 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 // ─── Color palette ────────────────────────────────────────────────────────────
-private val IosGlassBackground = Color(0xFF1C1C1E).copy(alpha = 0.88f)
-private val IosTrackBg         = Color.White.copy(alpha = 0.12f)
-private val IosNormalFill      = Color.White.copy(alpha = 0.80f)
-private val IosSilentFill      = Color(0xFFFF453A).copy(alpha = 0.85f)
-private val IosVibrateFill     = Color(0xFF32D74B).copy(alpha = 0.85f)
-private val IosRingFill        = Color(0xFFFF9F0A).copy(alpha = 0.85f)
-private val IosAlarmFill       = Color(0xFFFF6B00).copy(alpha = 0.85f)
-private val IosDivider         = Color.White.copy(alpha = 0.08f)
-private val IosIconTint        = Color.White
-private val IosLabelColor      = Color.White.copy(alpha = 0.60f)
 private val IosPillShape       = RoundedCornerShape(percent = 50)
 private val IosCardShape       = RoundedCornerShape(percent = 50)
 private val IosRingerShape     = RoundedCornerShape(percent = 50)
+
+private class IosThemeColors(val isDark: Boolean) {
+    val trackBg         = if (isDark) Color(0xFF2C2C2E) else Color(0xFFE5E5EA)
+    val normalFill      = if (isDark) Color(0xFFFFFFFF) else Color(0xFF1C1C1E)
+    val silentFill      = Color(0xFFFF453A)
+    val vibrateFill     = Color(0xFF32D74B)
+    val ringFill        = Color(0xFFFF9F0A)
+    val alarmFill       = Color(0xFFFF6B00)
+    val divider         = if (isDark) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.08f)
+    val iconTint        = if (isDark) Color.White else Color(0xFF1C1C1E)
+    val labelColor      = if (isDark) Color.White.copy(alpha = 0.60f) else Color.Black.copy(alpha = 0.60f)
+    
+    // Smoothly calculate what color the icon inside the slider should be based on its fill percentage
+    fun getDynamicIconTint(fraction: Float, isNormalColor: Boolean): Color {
+        val isCovered = fraction > 0.15f
+        return when {
+            isCovered -> {
+                // If it's normal volume fill and dark mode, the fill is White! So icon must be Black.
+                if (isNormalColor && isDark) Color(0xFF1C1C1E) else Color.White
+            }
+            else -> {
+                // Not covered. Just draw it against the track.
+                if (isDark) Color(0xFF8E8E93) else Color(0xFF8E8E93)
+            }
+        }
+    }
+}
 
 /**
  * Root Compose screen for the iOS-style volume panel.
@@ -256,7 +274,10 @@ fun IosVolumePanelScreen(
                 .padding(end = 12.dp),
             contentAlignment = Alignment.CenterEnd,
         ) {
+            val isDark = isSystemInDarkTheme()
+            val colors = remember(isDark) { IosThemeColors(isDark) }
             IosVolumeCard(
+                colors         = colors,
                 expanded       = expanded,
                 mediaVol       = mediaVol,
                 ringVol        = ringVol,
@@ -284,6 +305,7 @@ fun IosVolumePanelScreen(
 
 @Composable
 private fun IosVolumeCard(
+    colors: IosThemeColors,
     expanded: Boolean,
     mediaVol: Float,
     ringVol: Float,
@@ -323,7 +345,7 @@ private fun IosVolumeCard(
             Icon(
                 painter = painterResource(arrowIcon),
                 contentDescription = if (expanded) "Collapse" else "Expand",
-                tint = IosLabelColor,
+                tint = colors.labelColor,
                 modifier = Modifier.size(16.dp),
             )
         }
@@ -338,8 +360,9 @@ private fun IosVolumeCard(
             if (expanded) {
                 // Alarm
                 IosVolumeSlider(
+                    colors = colors,
                     fraction = alarmVol,
-                    fillColor = IosAlarmFill,
+                    fillColor = colors.alarmFill,
                     iconRes = R.drawable.ic_volume_alarm,
                     onDrag = onAlarmDrag,
                     onLongPress = {},
@@ -350,11 +373,12 @@ private fun IosVolumeCard(
 
                 // Ring
                 IosVolumeSlider(
+                    colors = colors,
                     fraction = if (isRingSilenced || isRingVibrate) 0f else ringVol,
                     fillColor = when {
-                        isRingSilenced -> IosSilentFill
-                        isRingVibrate  -> IosVibrateFill
-                        else           -> IosRingFill
+                        isRingSilenced -> colors.silentFill
+                        isRingVibrate  -> colors.vibrateFill
+                        else           -> colors.ringFill
                     },
                     iconRes = when {
                         isRingSilenced -> R.drawable.ic_volume_off
@@ -372,8 +396,9 @@ private fun IosVolumeCard(
 
             // Media (always visible, on the far right)
             IosVolumeSlider(
+                colors = colors,
                 fraction = mediaVol,
-                fillColor = IosNormalFill,
+                fillColor = colors.normalFill,
                 iconRes = when {
                     mediaVol <= 0f -> R.drawable.ic_volume_off
                     else           -> R.drawable.ic_volume_ringer
@@ -393,6 +418,7 @@ private fun IosVolumeCard(
             exit = shrinkVertically(spring(Spring.DampingRatioNoBouncy)) + fadeOut(tween(150)),
         ) {
             IosRingerModeRow(
+                colors = colors,
                 ringerMode = ringerMode,
                 hasVibrator = hasVibrator,
                 onSetRinger = onSetRinger,
@@ -407,6 +433,7 @@ private fun IosVolumeCard(
 
 @Composable
 private fun IosVolumeSlider(
+    colors: IosThemeColors,
     fraction: Float,
     fillColor: Color,
     iconRes: Int,
@@ -443,6 +470,12 @@ private fun IosVolumeSlider(
     val targetScaleY = 1f + (overscrollAmount * 0.4f)
     val targetScaleX = if (isDragging) 1.05f else 1f
 
+    val dynamicTint by animateColorAsState(
+        targetValue = colors.getDynamicIconTint(animFraction, fillColor == colors.normalFill),
+        animationSpec = tween(durationMillis = 150),
+        label = "dynamicIconTint"
+    )
+
     val scaleY by animateFloatAsState(
         targetValue = targetScaleY,
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
@@ -467,7 +500,7 @@ private fun IosVolumeSlider(
             .scale(scaleX, scaleY)
             .shadow(elevation = 12.dp, shape = IosPillShape)
             .clip(IosPillShape)
-            .background(IosTrackBg)
+            .background(colors.trackBg)
             // Intercept scroll so dragging doesn't scroll QS using drag start/end callbacks directly
             .pointerInput(enabled) {
                 if (!enabled) return@pointerInput
@@ -521,7 +554,7 @@ private fun IosVolumeSlider(
         Icon(
             painter = painterResource(iconRes),
             contentDescription = null,
-            tint = if (enabled) IosIconTint else IosIconTint.copy(alpha = 0.35f),
+            tint = if (enabled) dynamicTint else dynamicTint.copy(alpha = 0.35f),
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 10.dp)
@@ -536,6 +569,7 @@ private fun IosVolumeSlider(
 
 @Composable
 private fun IosRingerModeRow(
+    colors: IosThemeColors,
     ringerMode: Int,
     hasVibrator: Boolean,
     onSetRinger: (Int) -> Unit,
@@ -544,33 +578,36 @@ private fun IosRingerModeRow(
         modifier = Modifier
             .fillMaxWidth()
             .clip(IosRingerShape)
-            .background(IosTrackBg)
+            .background(colors.trackBg)
             .padding(2.dp),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         // Silent
         RingerPill(
+            colors = colors,
             iconRes = R.drawable.ic_volume_off,
             selected = ringerMode == AudioManager.RINGER_MODE_SILENT,
-            selectedColor = IosSilentFill,
+            selectedColor = colors.silentFill,
             onClick = { onSetRinger(AudioManager.RINGER_MODE_SILENT) },
             modifier = Modifier.weight(1f),
         )
         // Vibrate
         if (hasVibrator) {
             RingerPill(
+                colors = colors,
                 iconRes = R.drawable.ic_volume_ringer_vibrate,
                 selected = ringerMode == AudioManager.RINGER_MODE_VIBRATE,
-                selectedColor = IosVibrateFill,
+                selectedColor = colors.vibrateFill,
                 onClick = { onSetRinger(AudioManager.RINGER_MODE_VIBRATE) },
                 modifier = Modifier.weight(1f),
             )
         }
         // Normal
         RingerPill(
+            colors = colors,
             iconRes = R.drawable.ic_volume_ringer,
             selected = ringerMode == AudioManager.RINGER_MODE_NORMAL,
-            selectedColor = IosNormalFill,
+            selectedColor = colors.normalFill,
             onClick = { onSetRinger(AudioManager.RINGER_MODE_NORMAL) },
             modifier = Modifier.weight(1f),
         )
@@ -579,6 +616,7 @@ private fun IosRingerModeRow(
 
 @Composable
 private fun RingerPill(
+    colors: IosThemeColors,
     iconRes: Int,
     selected: Boolean,
     selectedColor: Color,
@@ -601,7 +639,10 @@ private fun RingerPill(
         Icon(
             painter = painterResource(iconRes),
             contentDescription = null,
-            tint = if (selected) Color(0xFF1C1C1E) else IosLabelColor,
+            tint = if (selected) {
+                // Determine contrasting icon color against the selected pill color
+                if (selectedColor == colors.normalFill && colors.isDark) Color(0xFF1C1C1E) else Color.White 
+            } else colors.labelColor,
             modifier = Modifier.size(18.dp),
         )
     }
@@ -612,3 +653,4 @@ private fun RingerPill(
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Removed StreamLabel helper to strictly match iOS styling
+
