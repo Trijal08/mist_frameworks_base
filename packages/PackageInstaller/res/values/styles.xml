@@ -152,4 +152,9 @@
         <item name="trackColor">@color/outlineVariantColor</item>
         <item name="trackCornerRadius">4dp</item>
     </style>
+
+    <style name="Theme.BottomSheetDialog" parent="Theme.Material3.DayNight.BottomSheetDialog">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+    </style>
 </resources>

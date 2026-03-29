@@ -412,26 +412,7 @@ public class PackageUtil {
      * 3. The test settings use_pia_v2 is 1
      */
     public static boolean isVersionTwoEnabled(@NonNull Context context) {
-        if (isAuto(context) || isTV(context) || isWatch(context)) {
-            Log.d(LOG_TAG, "The device doesn't support PIA version 2");
-            return false;
-        }
-
-        // Only enable PIA V2 on the version that is newer than BAKLAVA
-        if (Build.VERSION.SDK_INT_FULL <= Build.VERSION_CODES_FULL.BAKLAVA) {
-            Log.d(LOG_TAG, "The OS version doesn't support PIA version 2");
-            return false;
-        }
-
-        boolean testOverrideForPiaV2 = Settings.System.getInt(context.getContentResolver(),
-                "use_pia_v2", 0) == 1;
-        boolean usePiaV2aConfig = Flags.usePiaV2();
-        if (usePiaV2aConfig || testOverrideForPiaV2) {
-            Log.d(LOG_TAG, getDebugStringForPiaV2(usePiaV2aConfig, testOverrideForPiaV2));
-            return true;
-        }
-
-        Log.d(LOG_TAG, "Use PIA V1");
+        // We override this to false so it uses our custom Jetpack Compose PackageInstallerActivity!
         return false;
     }
 

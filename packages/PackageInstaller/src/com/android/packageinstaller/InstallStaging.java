@@ -21,6 +21,7 @@ import static android.content.res.AssetFileDescriptor.UNKNOWN_LENGTH;
 import static com.android.packageinstaller.PackageInstallerActivity.EXTRA_STAGED_SESSION_ID;
 
 import android.app.Activity;
+import androidx.activity.ComponentActivity;
 import android.app.AlertDialog;
 import android.app.Dialog;
 import android.app.DialogFragment;
@@ -52,7 +53,7 @@ import java.io.OutputStream;
  * If a package gets installed from a content URI this step stages the installation session
  * reading bytes from the URI.
  */
-public class InstallStaging extends Activity {
+public class InstallStaging extends ComponentActivity {
     private static final String LOG_TAG = InstallStaging.class.getSimpleName();
 
     private static final String STAGED_SESSION_ID = "STAGED_SESSION_ID";
@@ -75,36 +76,31 @@ public class InstallStaging extends Activity {
 
         setFinishOnTouchOutside(true);
 
-        AlertDialog.Builder builder = new AlertDialog.Builder(this);
-
-        builder.setIcon(R.drawable.ic_file_download);
-        builder.setTitle(getString(R.string.app_name_unknown));
-        builder.setView(R.layout.install_content_view);
-        builder.setNegativeButton(getString(R.string.cancel),
-                (ignored, ignored2) -> {
-                    if (mStagingTask != null) {
-                        mStagingTask.cancel(true);
-                    }
-
-                    cleanupStagingSession();
-
-                    setResult(RESULT_CANCELED);
-                    finish();
-                });
-        builder.setOnCancelListener(dialog -> {
-            if (mStagingTask != null) {
-                mStagingTask.cancel(true);
-            }
-
-            cleanupStagingSession();
-
-            setResult(RESULT_CANCELED);
-            finish();
-        });
-        mDialog = builder.create();
-        mDialog.show();
-        mDialog.requireViewById(com.android.packageinstaller.R.id.staging)
-            .setVisibility(View.VISIBLE);
+        com.android.packageinstaller.ui.PackageInstallerComposeBridge.setPackageInstallerContent(
+            this,
+            "Analyzing Package",
+            null,
+            "",
+            "Please wait…",
+            (String) null,
+            0L,
+            0,
+            0,
+            null,
+            com.android.packageinstaller.ui.InstallerPhase.INSTALLING,
+            () -> { return kotlin.Unit.INSTANCE; },
+            () -> { return kotlin.Unit.INSTANCE; },
+            () -> {
+                if (mStagingTask != null) {
+                    mStagingTask.cancel(true);
+                }
+                cleanupStagingSession();
+                setResult(RESULT_CANCELED);
+                finish();
+                return kotlin.Unit.INSTANCE;
+            },
+            false
+        );
 
         if (savedInstanceState != null) {
             mStagedSessionId = savedInstanceState.getInt(STAGED_SESSION_ID, 0);

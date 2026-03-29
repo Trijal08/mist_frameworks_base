@@ -23,6 +23,7 @@ import static com.android.packageinstaller.PackageUtil.getMaxTargetSdkVersionFor
 
 import android.Manifest;
 import android.app.Activity;
+import androidx.activity.ComponentActivity;
 import android.app.AppOpsManager;
 import android.app.DialogFragment;
 import android.app.Fragment;
@@ -64,7 +65,7 @@ import com.android.packageinstaller.v2.ui.UninstallLaunch;
  * Intent.ACTION_UNINSTALL_PKG_COMMAND and attribute
  * com.android.packageinstaller.PackageName set to the application package name
  */
-public class UninstallerActivity extends Activity {
+public class UninstallerActivity extends ComponentActivity {
     private static final String TAG = "UninstallerActivity";
 
     private static final String UNINSTALLING_CHANNEL = "uninstalling";
@@ -247,7 +248,44 @@ public class UninstallerActivity extends Activity {
         if (isTv()) {
             showContentFragment(new UninstallAlertFragment(), 0, 0);
         } else {
-            showDialogFragment(new UninstallAlertDialogFragment(), 0, 0);
+            CharSequence appLabel = mDialogInfo.appInfo.loadSafeLabel(getPackageManager());
+            android.graphics.drawable.Drawable appIcon = mDialogInfo.appInfo.loadIcon(getPackageManager());
+            String version = "";
+            try {
+                android.content.pm.PackageInfo pi = getPackageManager().getPackageInfo(mPackageName, 0);
+                version = pi.versionName != null ? pi.versionName : "";
+            } catch (Exception e) {}
+            
+            int targetSdk = mDialogInfo.appInfo != null ? mDialogInfo.appInfo.targetSdkVersion : 0;
+            int minSdk = mDialogInfo.appInfo != null ? mDialogInfo.appInfo.minSdkVersion : 0;
+            boolean isSystemApp = mDialogInfo.appInfo != null
+                    && (mDialogInfo.appInfo.flags & android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0;
+
+            com.android.packageinstaller.ui.PackageInstallerComposeBridge.setPackageInstallerContent(
+                this,
+                appLabel != null ? appLabel.toString() : mPackageName,
+                appIcon,
+                mPackageName,
+                version,
+                null, 
+                0,
+                targetSdk,
+                minSdk,
+                null,
+                com.android.packageinstaller.ui.InstallerPhase.UNINSTALL_CONFIRM,
+                () -> {
+                    startUninstallProgress(false);
+                    return kotlin.Unit.INSTANCE;
+                },
+                () -> { return kotlin.Unit.INSTANCE; },
+                () -> {
+                    dispatchAborted();
+                    setResult(android.app.Activity.RESULT_CANCELED);
+                    finish();
+                    return kotlin.Unit.INSTANCE;
+                },
+                isSystemApp
+            );
         }
     }
 
@@ -340,7 +378,7 @@ public class UninstallerActivity extends Activity {
 
             newIntent.setClass(this, UninstallAppProgress.class);
             startActivity(newIntent);
-        } else if (returnResult || mDialogInfo.callback != null || getCallingActivity() != null) {
+        } else {
             Intent newIntent = new Intent(this, UninstallUninstalling.class);
 
             newIntent.putExtra(Intent.EXTRA_USER, mDialogInfo.user);
@@ -349,6 +387,7 @@ public class UninstallerActivity extends Activity {
             newIntent.putExtra(UninstallUninstalling.EXTRA_APP_LABEL, label);
             newIntent.putExtra(UninstallUninstalling.EXTRA_KEEP_DATA, keepData);
             newIntent.putExtra(PackageInstaller.EXTRA_CALLBACK, mDialogInfo.callback);
+            
             if (returnResult) {
                 newIntent.putExtra(Intent.EXTRA_RETURN_RESULT, true);
             }
@@ -361,62 +400,7 @@ public class UninstallerActivity extends Activity {
                         mDialogInfo.deleteFlags);
             }
             startActivity(newIntent);
-        } else {
-            int uninstallId;
-            try {
-                uninstallId = UninstallEventReceiver.getNewId(this);
-            } catch (EventResultPersister.OutOfIdsException e) {
-                showGenericError();
-                return;
-            }
-
-            Intent broadcastIntent = new Intent(this, UninstallFinish.class);
-
-            broadcastIntent.setFlags(Intent.FLAG_RECEIVER_FOREGROUND);
-            broadcastIntent.putExtra(Intent.EXTRA_UNINSTALL_ALL_USERS, mDialogInfo.allUsers);
-            broadcastIntent.putExtra(PackageUtil.INTENT_ATTR_APPLICATION_INFO, mDialogInfo.appInfo);
-            broadcastIntent.putExtra(UninstallFinish.EXTRA_APP_LABEL, label);
-            broadcastIntent.putExtra(UninstallFinish.EXTRA_UNINSTALL_ID, uninstallId);
-            broadcastIntent.putExtra(UninstallFinish.EXTRA_IS_CLONE_APP, mIsClonedApp);
-
-            PendingIntent pendingIntent =
-                    PendingIntent.getBroadcast(this, uninstallId, broadcastIntent,
-                            PendingIntent.FLAG_MUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-
-            NotificationManager notificationManager = getSystemService(NotificationManager.class);
-            NotificationChannel uninstallingChannel = new NotificationChannel(UNINSTALLING_CHANNEL,
-                    getString(R.string.uninstalling_notification_channel),
-                    NotificationManager.IMPORTANCE_MIN);
-            notificationManager.createNotificationChannel(uninstallingChannel);
-
-            Notification uninstallingNotification =
-                    (new Notification.Builder(this, UNINSTALLING_CHANNEL))
-                    .setSmallIcon(R.drawable.ic_remove).setProgress(0, 1, true)
-                    .setContentTitle(mIsClonedApp
-                            ? getString(R.string.uninstalling_cloned_app, label)
-                            : getString(R.string.uninstalling_app, label))
-                            .setOngoing(true)
-                    .build();
-
-            notificationManager.notify(uninstallId, uninstallingNotification);
-
-            try {
-                Log.i(TAG, "Uninstalling extras=" + broadcastIntent.getExtras());
-
-                int flags = mDialogInfo.allUsers ? PackageManager.DELETE_ALL_USERS : 0;
-                flags |= keepData ? PackageManager.DELETE_KEEP_DATA : 0;
-                flags |= mDialogInfo.deleteFlags;
-
-                createContextAsUser(mDialogInfo.user, 0).getPackageManager().getPackageInstaller()
-                        .uninstall(new VersionedPackage(mDialogInfo.appInfo.packageName,
-                                PackageManager.VERSION_CODE_HIGHEST), flags,
-                                pendingIntent.getIntentSender());
-            } catch (Exception e) {
-                notificationManager.cancel(uninstallId);
-
-                Log.e(TAG, "Cannot start uninstall", e);
-                showGenericError();
-            }
+            finish();
         }
     }
 

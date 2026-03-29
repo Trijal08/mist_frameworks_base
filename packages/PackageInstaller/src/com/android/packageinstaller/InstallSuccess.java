@@ -17,6 +17,7 @@
 package com.android.packageinstaller;
 
 import android.app.Activity;
+import androidx.activity.ComponentActivity;
 import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
 import android.content.DialogInterface;
@@ -36,7 +37,7 @@ import java.util.List;
 /**
  * Finish installation: Return status code to the caller or display "success" UI to user
  */
-public class InstallSuccess extends Activity {
+public class InstallSuccess extends ComponentActivity {
     private static final String LOG_TAG = InstallSuccess.class.getSimpleName();
 
     @Nullable
@@ -87,52 +88,53 @@ public class InstallSuccess extends Activity {
             return;
         }
 
-        AlertDialog.Builder builder = new AlertDialog.Builder(this);
-        builder.setIcon(mAppSnippet.icon);
-        builder.setTitle(mAppSnippet.label);
-        builder.setView(R.layout.install_content_view);
-        builder.setPositiveButton(getString(R.string.launch), null);
-        builder.setNegativeButton(getString(R.string.done),
-                (ignored, ignored2) -> {
-                    if (mAppPackageName != null) {
-                        Log.i(LOG_TAG, "Finished installing " + mAppPackageName);
-                    }
-                    finish();
-                });
-        builder.setOnCancelListener(dialog -> {
-            if (mAppPackageName != null) {
-                Log.i(LOG_TAG, "Finished installing " + mAppPackageName);
+        int targetSdk = 0;
+        try {
+            android.content.pm.PackageInfo pi = getPackageManager().getPackageInfo(mAppPackageName, 0);
+            if (pi != null && pi.applicationInfo != null) {
+                targetSdk = pi.applicationInfo.targetSdkVersion;
             }
-            finish();
-        });
-        mDialog = builder.create();
-        mDialog.show();
-        mDialog.requireViewById(R.id.install_success).setVisibility(View.VISIBLE);
-        // Show or hide "launch" button
-        boolean visible = false;
-        if (mLaunchIntent != null) {
-            List<ResolveInfo> list = getPackageManager().queryIntentActivities(mLaunchIntent,
-                    0);
-            if (list != null && list.size() > 0) {
-                visible = true;
-            }
-        }
-        visible = visible && isLauncherActivityEnabled(mLaunchIntent);
+        } catch (Exception ignored) {}
 
-        Button launchButton = mDialog.getButton(DialogInterface.BUTTON_POSITIVE);
-        if (visible) {
-            launchButton.setOnClickListener(view -> {
-                try {
-                    startActivity(mLaunchIntent.addFlags(
-                        Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
-                } catch (ActivityNotFoundException | SecurityException e) {
-                    Log.e(LOG_TAG, "Could not start activity", e);
+        com.android.packageinstaller.ui.PackageInstallerComposeBridge.setPackageInstallerContent(
+            this,
+            mAppSnippet.label != null ? mAppSnippet.label.toString() : "",
+            mAppSnippet.icon,
+            mAppPackageName != null ? mAppPackageName : "",
+            "",
+            (String) null,
+            0L,
+            targetSdk,
+            0,
+            null,
+            com.android.packageinstaller.ui.InstallerPhase.INSTALL_SUCCESS,
+            () -> { return kotlin.Unit.INSTANCE; },
+            () -> {
+                boolean visible = false;
+                if (mLaunchIntent != null) {
+                    List<ResolveInfo> list = getPackageManager().queryIntentActivities(mLaunchIntent, 0);
+                    if (list != null && list.size() > 0) {
+                        visible = true;
+                    }
+                }
+                visible = visible && isLauncherActivityEnabled(mLaunchIntent);
+                if (visible) {
+                    try {
+                        startActivity(mLaunchIntent.addFlags(
+                            Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP));
+                    } catch (ActivityNotFoundException | SecurityException e) {
+                        Log.e(LOG_TAG, "Could not start activity", e);
+                    }
                 }
                 finish();
-            });
-        } else {
-            launchButton.setVisibility(View.GONE);
-        }
+                return kotlin.Unit.INSTANCE;
+            },
+            () -> {
+                finish();
+                return kotlin.Unit.INSTANCE;
+            },
+            false
+        );
     }
 
     private boolean isLauncherActivityEnabled(Intent intent) {

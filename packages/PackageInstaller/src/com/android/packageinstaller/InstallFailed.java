@@ -17,6 +17,7 @@
 package com.android.packageinstaller;
 
 import android.app.Activity;
+import androidx.activity.ComponentActivity;
 import android.app.AlertDialog;
 import android.app.Dialog;
 import android.app.DialogFragment;
@@ -34,7 +35,7 @@ import androidx.annotation.Nullable;
 /**
  * Installation failed: Return status code to the caller or display failure UI to user
  */
-public class InstallFailed extends Activity {
+public class InstallFailed extends ComponentActivity {
 
     private static final String LOG_TAG = InstallFailed.class.getSimpleName();
 
@@ -50,30 +51,6 @@ public class InstallFailed extends Activity {
      *
      * @param statusCode The status code from the package installer.
      */
-    private void setExplanationFromErrorCode(int statusCode) {
-        Log.d(LOG_TAG, "Installation status code: " + statusCode);
-
-        View viewToEnable;
-        switch (statusCode) {
-            case PackageInstaller.STATUS_FAILURE_BLOCKED:
-                viewToEnable = mDialog.requireViewById(R.id.install_failed_blocked);
-                break;
-            case PackageInstaller.STATUS_FAILURE_CONFLICT:
-                viewToEnable = mDialog.requireViewById(R.id.install_failed_conflict);
-                break;
-            case PackageInstaller.STATUS_FAILURE_INCOMPATIBLE:
-                viewToEnable = mDialog.requireViewById(R.id.install_failed_incompatible);
-                break;
-            case PackageInstaller.STATUS_FAILURE_INVALID:
-                viewToEnable = mDialog.requireViewById(R.id.install_failed_invalid_apk);
-                break;
-            default:
-                viewToEnable = mDialog.requireViewById(R.id.install_failed);
-                break;
-        }
-
-        viewToEnable.setVisibility(View.VISIBLE);
-    }
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -114,26 +91,30 @@ public class InstallFailed extends Activity {
             // Store label for dialog
             mLabel = as.label;
 
-            AlertDialog.Builder builder = new AlertDialog.Builder(this);
+            com.android.packageinstaller.ui.PackageInstallerComposeBridge.setPackageInstallerContent(
+                this,
+                as != null && as.label != null ? as.label.toString() : "",
+                as != null ? as.icon : null,
+                "",
+                "",
+                (String) null,
+                0L,
+                0,
+                0,
+                null,
+                com.android.packageinstaller.ui.InstallerPhase.INSTALL_FAILED,
+                () -> { return kotlin.Unit.INSTANCE; },
+                () -> { return kotlin.Unit.INSTANCE; },
+                () -> {
+                    finish();
+                    return kotlin.Unit.INSTANCE;
+                },
+                false
+            );
 
-            builder.setIcon(as.icon);
-            builder.setTitle(as.label);
-            builder.setView(R.layout.install_content_view);
-            builder.setPositiveButton(getString(R.string.done),
-                    (ignored, ignored2) -> finish());
-            builder.setOnCancelListener(dialog -> {
-                finish();
-            });
-            mDialog = builder.create();
-            mDialog.show();
-
-            // Show out of space dialog if needed
             if (statusCode == PackageInstaller.STATUS_FAILURE_STORAGE) {
                 (new OutOfSpaceDialog()).show(getFragmentManager(), "outofspace");
             }
-
-            // Get status messages
-            setExplanationFromErrorCode(statusCode);
         }
     }
 

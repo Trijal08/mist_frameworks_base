@@ -21,6 +21,7 @@ import static android.view.WindowManager.LayoutParams.SYSTEM_FLAG_HIDE_NON_SYSTE
 
 import android.Manifest;
 import android.app.Activity;
+import androidx.activity.ComponentActivity;
 import android.app.AlertDialog;
 import android.app.AppOpsManager;
 import android.app.Dialog;
@@ -72,7 +73,7 @@ import java.util.List;
  * Based on the user response the package is then installed by launching InstallAppConfirm
  * sub activity. All state transitions are handled in this activity
  */
-public class PackageInstallerActivity extends Activity {
+public class PackageInstallerActivity extends ComponentActivity {
     private static final String TAG = "PackageInstaller";
 
     private static final int REQUEST_TRUST_EXTERNAL_SOURCE = 1;
@@ -149,37 +150,8 @@ public class PackageInstallerActivity extends Activity {
     private AlertDialog mDialog;
 
     private void startInstallConfirm() {
-        TextView viewToEnable;
-
-        if (mAppInfo != null) {
-            viewToEnable = mDialog.requireViewById(R.id.install_confirm_question_update);
-
-            final CharSequence existingUpdateOwnerLabel = getExistingUpdateOwnerLabel();
-            final CharSequence requestedUpdateOwnerLabel =
-                    getApplicationLabel(mOriginatingPackageFromSessionInfo);
-            if (!TextUtils.isEmpty(existingUpdateOwnerLabel)
-                    && mPendingUserActionReason == PackageInstaller.REASON_REMIND_OWNERSHIP) {
-                String updateOwnerString =
-                        getString(R.string.install_confirm_question_update_owner_reminder,
-                                requestedUpdateOwnerLabel, existingUpdateOwnerLabel);
-                Spanned styledUpdateOwnerString =
-                        Html.fromHtml(updateOwnerString, Html.FROM_HTML_MODE_LEGACY);
-                viewToEnable.setText(styledUpdateOwnerString);
-                mOk.setText(R.string.update_anyway);
-            } else {
-                mOk.setText(R.string.update);
-            }
-        } else {
-            // This is a new application with no permissions.
-            viewToEnable = mDialog.requireViewById(R.id.install_confirm_question);
-        }
-
-        viewToEnable.setVisibility(View.VISIBLE);
-        viewToEnable.setMovementMethod(new ScrollingMovementMethod());
-
         mEnableOk = true;
-        mOk.setEnabled(true);
-        mOk.setFilterTouchesWhenObscured(true);
+        bindUi();
     }
 
     private CharSequence getExistingUpdateOwnerLabel() {
@@ -462,9 +434,6 @@ public class PackageInstallerActivity extends Activity {
         if (mLocalLOGV) Log.i(TAG, "onResume(): mAppSnippet=" + mAppSnippet);
 
         if (mAppSnippet != null) {
-            // load placeholder layout with OK button disabled until we override this layout in
-            // startInstallConfirm
-            bindUi();
             checkIfAllowedAndInitiateInstall();
         }
 
@@ -476,11 +445,6 @@ public class PackageInstallerActivity extends Activity {
     @Override
     protected void onPause() {
         super.onPause();
-
-        if (mOk != null) {
-            // Don't allow the install button to be clicked as there might be overlays
-            mOk.setEnabled(false);
-        }
     }
 
     @Override
@@ -502,41 +466,78 @@ public class PackageInstallerActivity extends Activity {
     }
 
     private void bindUi() {
-        AlertDialog.Builder builder = new AlertDialog.Builder(this);
-        builder.setIcon(mAppSnippet.icon);
-        builder.setTitle(mAppSnippet.label);
-        builder.setView(R.layout.install_content_view);
-        builder.setPositiveButton(getString(R.string.install),
-                (ignored, ignored2) -> {
-                    if (mOk.isEnabled()) {
-                        if (mSessionId != -1) {
-                            setActivityResult(RESULT_OK);
-                            finish();
-                        } else {
-                            startInstall();
-                        }
-                    }
-                });
-        builder.setNegativeButton(getString(R.string.cancel),
-                (ignored, ignored2) -> {
-                    // Cancel and finish
-                    setActivityResult(RESULT_CANCELED);
-                    finish();
-                });
-        builder.setOnCancelListener(dialog -> {
-            // Cancel and finish
-            setActivityResult(RESULT_CANCELED);
-            finish();
-        });
-        mDialog = builder.create();
-        mDialog.show();
-
-        mOk = mDialog.getButton(DialogInterface.BUTTON_POSITIVE);
-        mOk.setEnabled(false);
-
-        if (!mOk.isInTouchMode()) {
-            mDialog.getButton(DialogInterface.BUTTON_NEGATIVE).requestFocus();
+        android.util.Log.e(TAG, "==== CUSTOM UI LOG ==== bindUi() initializing Jetpack Compose Wrap!");
+        String appName = mAppSnippet != null && mAppSnippet.label != null ? mAppSnippet.label.toString() : "";
+        String packageName = mPkgInfo != null ? mPkgInfo.packageName : "";
+        String versionName = mPkgInfo != null && mPkgInfo.versionName != null ? mPkgInfo.versionName : "";
+        long size = 0;
+        if (mPkgInfo != null && mPkgInfo.applicationInfo != null && mPkgInfo.applicationInfo.publicSourceDir != null) {
+            size = new java.io.File(mPkgInfo.applicationInfo.publicSourceDir).length();
         }
+        
+        com.android.packageinstaller.ui.InstallerPhase initialPhase = com.android.packageinstaller.ui.InstallerPhase.CONFIRM;
+        String currentVersion = null;
+        Integer currentTargetSdk = null;
+        if (mAppInfo != null && (mAppInfo.flags & android.content.pm.ApplicationInfo.FLAG_INSTALLED) != 0) {
+            initialPhase = com.android.packageinstaller.ui.InstallerPhase.UPDATE_CONFIRM;
+            try {
+                android.content.pm.PackageInfo contextPkgInfo = getPackageManager()
+                    .getPackageInfo(mAppInfo.packageName, 0);
+                currentVersion = contextPkgInfo.versionName;
+                if (contextPkgInfo.applicationInfo != null) {
+                    currentTargetSdk = contextPkgInfo.applicationInfo.targetSdkVersion;
+                }
+            } catch (Exception e) {}
+        }
+        
+        int targetSdk = mPkgInfo != null && mPkgInfo.applicationInfo != null ? mPkgInfo.applicationInfo.targetSdkVersion : 0;
+        int minSdk = mPkgInfo != null && mPkgInfo.applicationInfo != null ? mPkgInfo.applicationInfo.minSdkVersion : 0;
+        boolean isSystemApp = mPkgInfo != null && mPkgInfo.applicationInfo != null
+                && (mPkgInfo.applicationInfo.flags & android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0;
+
+        long accurateSize = size;
+        try {
+            android.app.usage.StorageStatsManager sm = (android.app.usage.StorageStatsManager)
+                    getSystemService(android.content.Context.STORAGE_STATS_SERVICE);
+            if (sm != null && mPkgInfo != null && mPkgInfo.applicationInfo != null) {
+                android.app.usage.StorageStats stats = sm.queryStatsForPackage(
+                        android.os.storage.StorageManager.UUID_DEFAULT,
+                        mPkgInfo.packageName, android.os.Process.myUserHandle());
+                accurateSize = stats.getAppBytes() + stats.getDataBytes();
+            }
+        } catch (Exception ignored) {}
+
+        com.android.packageinstaller.ui.PackageInstallerComposeBridge.setPackageInstallerContent(
+            this,
+            appName,
+            mAppSnippet != null ? mAppSnippet.icon : null,
+            packageName,
+            versionName,
+            currentVersion,
+            accurateSize,
+            targetSdk,
+            minSdk,
+            currentTargetSdk,
+            initialPhase,
+            () -> {
+                if (mSessionId != -1) {
+                    setActivityResult(RESULT_OK);
+                    finish();
+                } else {
+                    startInstall();
+                }
+                return kotlin.Unit.INSTANCE;
+            },
+            () -> {
+                return kotlin.Unit.INSTANCE;
+            },
+            () -> {
+                setActivityResult(RESULT_CANCELED);
+                finish();
+                return kotlin.Unit.INSTANCE;
+            },
+            isSystemApp
+        );
     }
 
     private void setActivityResult(int resultCode) {

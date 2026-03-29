@@ -19,7 +19,7 @@ package com.android.packageinstaller;
 import static com.android.packageinstaller.PackageInstallerActivity.EXTRA_APP_SNIPPET;
 import static com.android.packageinstaller.PackageInstallerActivity.EXTRA_STAGED_SESSION_ID;
 
-import android.app.Activity;
+import androidx.activity.ComponentActivity;
 import android.app.AlertDialog;
 import android.app.PendingIntent;
 import android.content.DialogInterface;
@@ -50,7 +50,7 @@ import java.io.IOException;
  * <p>This has two phases: First send the data to the package manager, then wait until the package
  * manager processed the result.</p>
  */
-public class InstallInstalling extends Activity {
+public class InstallInstalling extends ComponentActivity {
     private static final String LOG_TAG = InstallInstalling.class.getSimpleName();
 
     private static final String SESSION_ID = "com.android.packageinstaller.SESSION_ID";
@@ -102,29 +102,46 @@ public class InstallInstalling extends Activity {
             PackageUtil.AppSnippet as = PackageUtil.getAppSnippet(this, appInfo, sourceFile);
             getIntent().putExtra(EXTRA_APP_SNIPPET, as);
 
-            AlertDialog.Builder builder = new AlertDialog.Builder(this);
+            CharSequence appNameLabel = as != null && as.label != null ? as.label : appInfo != null ? appInfo.packageName : "";
+            android.graphics.drawable.Drawable appIcon = as != null ? as.icon : null;
+            long size = 0;
+            if (appInfo != null && appInfo.publicSourceDir != null) {
+                size = new java.io.File(appInfo.publicSourceDir).length();
+            }
 
-            builder.setIcon(as.icon);
-            builder.setTitle(as.label);
-            builder.setView(R.layout.install_content_view);
-            builder.setNegativeButton(getString(R.string.cancel),
-                    (ignored, ignored2) -> {
-                        if (mInstallingTask != null) {
-                            mInstallingTask.cancel(true);
-                        }
-
-                        if (mSessionId > 0) {
-                            getPackageManager().getPackageInstaller().abandonSession(mSessionId);
-                            mSessionId = 0;
-                        }
-
-                        setResult(RESULT_CANCELED);
-                        finish();
-                    });
-            builder.setCancelable(false);
-            mDialog = builder.create();
-            mDialog.show();
-            mDialog.requireViewById(R.id.installing).setVisibility(View.VISIBLE);
+            int targetSdk = appInfo != null ? appInfo.targetSdkVersion : 0;
+            com.android.packageinstaller.ui.PackageInstallerComposeBridge.setPackageInstallerContent(
+                this,
+                appNameLabel.toString(),
+                appIcon,
+                appInfo != null ? appInfo.packageName : "",
+                "Installing...",
+                (String) null,
+                size,
+                targetSdk,
+                0,
+                null,
+                com.android.packageinstaller.ui.InstallerPhase.INSTALLING,
+                () -> {
+                    return kotlin.Unit.INSTANCE;
+                },
+                () -> {
+                    return kotlin.Unit.INSTANCE;
+                },
+                () -> {
+                    if (mInstallingTask != null) {
+                        mInstallingTask.cancel(true);
+                    }
+                    if (mSessionId > 0) {
+                        getPackageManager().getPackageInstaller().abandonSession(mSessionId);
+                        mSessionId = 0;
+                    }
+                    setResult(RESULT_CANCELED);
+                    finish();
+                    return kotlin.Unit.INSTANCE;
+                },
+                false
+            );
 
             if (savedInstanceState != null) {
                 mSessionId = savedInstanceState.getInt(SESSION_ID);
@@ -161,7 +178,10 @@ public class InstallInstalling extends Activity {
                 }
             }
 
-            mCancelButton = mDialog.getButton(DialogInterface.BUTTON_NEGATIVE);
+            // mCancelButton is intentionally bypassed in Compose because the progress 
+            // sheet doesn't have a cancel button natively, or if it does, it's routed 
+            // through onDismiss directly!
+            mCancelButton = null;
         }
     }
 
@@ -210,7 +230,7 @@ public class InstallInstalling extends Activity {
                 mInstallingTask.execute();
             } else {
                 // we will receive a broadcast when the install is finished
-                mCancelButton.setEnabled(false);
+                // Do not disable mCancelButton, handled contextually.
                 setFinishOnTouchOutside(false);
             }
         }
@@ -226,9 +246,7 @@ public class InstallInstalling extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (mCancelButton.isEnabled()) {
-            super.onBackPressed();
-        }
+        super.onBackPressed();
     }
 
     @Override
@@ -325,8 +343,7 @@ public class InstallInstalling extends Activity {
                             PackageManager.INSTALL_FAILED_INTERNAL_ERROR, null);
                         return;
                     }
-                }, 100);
-                mCancelButton.setEnabled(false);
+                }, 1500);
                 setFinishOnTouchOutside(false);
             } else {
                 getPackageManager().getPackageInstaller().abandonSession(mSessionId);

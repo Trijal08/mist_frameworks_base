@@ -16,7 +16,7 @@
 
 package com.android.packageinstaller;
 
-import android.app.Activity;
+import androidx.activity.ComponentActivity;
 import android.app.AlertDialog;
 import android.app.Dialog;
 import android.app.DialogFragment;
@@ -43,7 +43,7 @@ import com.android.packageinstaller.common.UninstallEventReceiver;
 /**
  * Start an uninstallation, show a dialog while uninstalling and return result to the caller.
  */
-public class UninstallUninstalling extends Activity implements
+public class UninstallUninstalling extends ComponentActivity implements
         EventResultPersister.EventResultObserver {
     private static final String LOG_TAG = UninstallUninstalling.class.getSimpleName();
 
@@ -92,18 +92,28 @@ public class UninstallUninstalling extends Activity implements
                     isCloneUser = true;
                 }
 
-                // Show dialog, which is the whole UI
-                FragmentTransaction transaction = getFragmentManager().beginTransaction();
-                Fragment prev = getFragmentManager().findFragmentByTag("dialog");
-                if (prev != null) {
-                    transaction.remove(prev);
-                }
-                DialogFragment dialog = new UninstallUninstallingFragment();
-                Bundle args = new Bundle();
-                args.putBoolean(EXTRA_IS_CLONE_USER, isCloneUser);
-                dialog.setArguments(args);
-                dialog.setCancelable(false);
-                dialog.show(transaction, "dialog");
+                CharSequence appLabel = mLabel != null ? mLabel : mAppInfo != null ? mAppInfo.loadSafeLabel(getPackageManager()) : "";
+                android.graphics.drawable.Drawable appIcon = mAppInfo != null ? mAppInfo.loadIcon(getPackageManager()) : null;
+                boolean isSystemApp = mAppInfo != null && (mAppInfo.flags & android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0;
+
+                int targetSdk = mAppInfo != null ? mAppInfo.targetSdkVersion : 0;
+                com.android.packageinstaller.ui.PackageInstallerComposeBridge.setPackageInstallerContent(
+                    this,
+                    appLabel.toString(),
+                    appIcon,
+                    mAppInfo != null ? mAppInfo.packageName : "",
+                    "Uninstalling...",
+                    (String) null,
+                    0L,
+                    targetSdk,
+                    0,
+                    null,
+                    com.android.packageinstaller.ui.InstallerPhase.UNINSTALLING,
+                    () -> { return kotlin.Unit.INSTANCE; },
+                    () -> { return kotlin.Unit.INSTANCE; },
+                    () -> { return kotlin.Unit.INSTANCE; },
+                    isSystemApp
+                );
 
                 mUninstallId = UninstallEventReceiver.addObserver(this,
                         EventResultPersister.GENERATE_NEW_ID, this);
@@ -150,25 +160,47 @@ public class UninstallUninstalling extends Activity implements
 
     @Override
     public void onResult(int status, int legacyStatus, @Nullable String message, int serviceId) {
-        if (mCallback != null) {
-            // The caller will be informed about the result via a callback
-            mCallback.onUninstallComplete(mAppInfo.packageName, legacyStatus, message);
-        } else if (mReturnResult) {
-            // The caller will be informed about the result and might decide to display it
-            Intent result = new Intent();
+        new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+            CharSequence appLabel = mLabel != null ? mLabel : (mAppInfo != null ? mAppInfo.loadSafeLabel(getPackageManager()) : "");
+            
+            java.lang.Runnable completion = () -> {
+                if (mCallback != null) {
+                    mCallback.onUninstallComplete(mAppInfo.packageName, legacyStatus, message);
+                } else if (mReturnResult) {
+                    Intent result = new Intent();
+                    result.putExtra(Intent.EXTRA_INSTALL_RESULT, legacyStatus);
+                    setResult(status == PackageInstaller.STATUS_SUCCESS ? android.app.Activity.RESULT_OK
+                            : android.app.Activity.RESULT_FIRST_USER, result);
+                }
+                finish();
+            };
 
-            result.putExtra(Intent.EXTRA_INSTALL_RESULT, legacyStatus);
-            setResult(status == PackageInstaller.STATUS_SUCCESS ? Activity.RESULT_OK
-                    : Activity.RESULT_FIRST_USER, result);
-        } else {
-            // This is the rare case that the caller did not ask for the result, but wanted to be
-            // notified via onActivityResult when the installation finishes
-            if (status != PackageInstaller.STATUS_SUCCESS) {
-                Toast.makeText(this, getString(R.string.uninstall_failed_app, mLabel),
-                        Toast.LENGTH_LONG).show();
+            boolean isSystemApp = mAppInfo != null && (mAppInfo.flags & android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0;
+            int targetSdk = mAppInfo != null ? mAppInfo.targetSdkVersion : 0;
+            if (status == PackageInstaller.STATUS_SUCCESS) {
+                com.android.packageinstaller.ui.PackageInstallerComposeBridge.setPackageInstallerContent(
+                    this, appLabel.toString(), null, mAppInfo != null ? mAppInfo.packageName : "",
+                    "Uninstall Success", (String) null, 0L, targetSdk, 0,
+                    null,
+                    com.android.packageinstaller.ui.InstallerPhase.UNINSTALL_SUCCESS,
+                    () -> { return kotlin.Unit.INSTANCE; }, 
+                    () -> { return kotlin.Unit.INSTANCE; }, 
+                    () -> { completion.run(); return kotlin.Unit.INSTANCE; },
+                    isSystemApp
+                );
+            } else {
+                com.android.packageinstaller.ui.PackageInstallerComposeBridge.setPackageInstallerContent(
+                    this, appLabel.toString(), null, mAppInfo != null ? mAppInfo.packageName : "",
+                    "Uninstall Failed", (String) null, 0L, targetSdk, 0,
+                    null,
+                    com.android.packageinstaller.ui.InstallerPhase.UNINSTALL_FAILED,
+                    () -> { return kotlin.Unit.INSTANCE; }, 
+                    () -> { return kotlin.Unit.INSTANCE; }, 
+                    () -> { completion.run(); return kotlin.Unit.INSTANCE; },
+                    isSystemApp
+                );
             }
-        }
-        finish();
+        }, 300);
     }
 
     @Override

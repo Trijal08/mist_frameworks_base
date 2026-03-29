@@ -80,16 +80,24 @@
         </activity>
 
         <activity android:name=".InstallStaging"
+                android:theme="@style/Theme.BottomSheetDialog"
                 android:exported="false" />
 
         <activity android:name=".DeleteStagedFileOnResult"
             android:exported="false" />
 
         <activity android:name=".PackageInstallerActivity"
-                android:exported="false"
-                android:enableOnBackInvokedCallback="false" />
+                android:theme="@style/Theme.BottomSheetDialog"
+                android:exported="true"
+                android:enableOnBackInvokedCallback="false">
+            <intent-filter>
+                <action android:name="android.intent.action.INSTALL_PACKAGE" />
+                <data android:scheme="content" />
+            </intent-filter>
+        </activity>
 
         <activity android:name=".InstallInstalling"
+                android:theme="@style/Theme.BottomSheetDialog"
                 android:exported="false"
                 android:enableOnBackInvokedCallback="false" />
 
@@ -102,16 +110,17 @@
         </receiver>
 
         <activity android:name=".InstallSuccess"
+                android:theme="@style/Theme.BottomSheetDialog"
                 android:exported="false" />
 
         <activity android:name=".InstallFailed"
+                android:theme="@style/Theme.BottomSheetDialog"
                 android:exported="false" />
 
         <activity android:name=".UninstallerActivity"
-                android:theme="@style/Theme.UninstallerActivity"
+                android:theme="@style/Theme.BottomSheetDialog"
                 android:configChanges="orientation|keyboardHidden|screenSize"
                 android:excludeFromRecents="true"
-                android:noHistory="true"
                 android:exported="true">
             <intent-filter android:priority="1">
                 <action android:name="android.intent.action.DELETE" />
@@ -143,7 +152,9 @@
         </receiver>
 
         <activity android:name=".UninstallUninstalling"
+            android:theme="@style/Theme.BottomSheetDialog"
             android:excludeFromRecents="true"
+            android:launchMode="singleTop"
             android:enableOnBackInvokedCallback="false"
             android:exported="false" />
 

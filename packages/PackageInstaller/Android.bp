@@ -57,12 +57,25 @@ java_defaults {
         "androidx.lifecycle_lifecycle-livedata",
         "com.google.android.material_material",
         "kotlin-parcelize-runtime",
+        "androidx.activity_activity-compose",
+        "androidx.compose.animation_animation-graphics",
+        "androidx.compose.foundation_foundation",
+        "androidx.compose.material3_material3",
+        "androidx.compose.material_material-icons-extended",
+        "androidx.compose.runtime_runtime",
+        "androidx.compose.ui_ui",
+        "androidx.lifecycle_lifecycle-viewmodel-compose",
     ],
 
     lint: {
         error_checks: ["Recycle"],
     },
     kotlin_plugins: ["kotlin-parcelize-compiler-plugin"],
+    kotlincflags: [
+        "-Xjvm-default=all",
+        "-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi",
+        "-P plugin:androidx.compose.compiler.plugins.kotlin:sourceInformation=true",
+    ],
 
     optimize: {
         optimize: true,
