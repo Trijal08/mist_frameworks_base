@@ -91,7 +91,7 @@ public class UserProfileUtils {
     public static String getDeviceName() {
         String marketName = SystemProperties.get("ro.product.marketname");
         String modelName = SystemProperties.get("ro.product.model");
-        String romDevice = SystemProperties.get("ro.lunaris.device");
+        String romDevice = SystemProperties.get("ro.mist.device");
 
         if (marketName != null && !marketName.isEmpty()) {
             return marketName;
