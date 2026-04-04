@@ -17,8 +17,13 @@
 package com.android.systemui.mist.volume
 
 import android.content.Context
+import android.database.ContentObserver
 import android.os.Handler
 import android.os.Looper
+import android.os.UserHandle
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.provider.Settings
 import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.plugins.VolumeDialog
 import com.android.systemui.plugins.VolumeDialogController
@@ -29,14 +34,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import lineageos.providers.LineageSettings
 import javax.inject.Inject
 
-/**
- * iOS-style volume dialog plugin for MistOS.
- *
- * Registered as volume_dialog_type = 3.
- * Shows a vertical pill-style volume panel that expands to reveal all audio streams.
- */
 class IosVolumeDialogPlugin @Inject constructor(
     @Application private val context: Context,
     private val controller: VolumeDialogController,
@@ -50,10 +50,26 @@ class IosVolumeDialogPlugin @Inject constructor(
 
     private var isShowing = false
     private var isExpanded = false
+    private var isOnLeft = false
 
     companion object {
         private const val DISMISS_TIMEOUT_MS = 3000L
         private const val DISMISS_TIMEOUT_EXPANDED_MS = 5000L
+    }
+
+    private val volumePanelOnLeftObserver = object : ContentObserver(handler) {
+        override fun onChange(selfChange: Boolean) {
+            val onLeft = LineageSettings.Secure.getIntForUser(
+                context.contentResolver,
+                LineageSettings.Secure.VOLUME_PANEL_ON_LEFT,
+                0,
+                UserHandle.USER_CURRENT,
+            ) != 0
+            if (onLeft != isOnLeft) {
+                isOnLeft = onLeft
+                recreateDialog()
+            }
+        }
     }
 
     private val controllerCallbacks = object : VolumeDialogController.Callbacks {
@@ -73,6 +89,37 @@ class IosVolumeDialogPlugin @Inject constructor(
             handler.post {
                 showDialog()
                 rescheduleAutoDismiss()
+
+                val expandOnKey = Settings.Secure.getIntForUser(
+                    context.contentResolver,
+                    Settings.Secure.IOS_VOLUME_EXPAND_ON_KEY,
+                    0,
+                    UserHandle.USER_CURRENT,
+                ) != 0
+                if (expandOnKey) {
+                    dialog?.expandPanel()
+                }
+
+                val hapticEnabled = Settings.Secure.getIntForUser(
+                    context.contentResolver,
+                    Settings.Secure.VOLUME_DIALOG_HAPTIC_FEEDBACK,
+                    1,
+                    UserHandle.USER_CURRENT,
+                ) != 0
+                if (hapticEnabled) {
+                    val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+                    if (vibrator?.hasVibrator() == true) {
+                        try {
+                            vibrator.vibrate(
+                                VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK)
+                            )
+                        } catch (_: Exception) {
+                            vibrator.vibrate(
+                                VibrationEffect.createOneShot(18L, VibrationEffect.DEFAULT_AMPLITUDE)
+                            )
+                        }
+                    }
+                }
             }
         }
 
@@ -90,7 +137,28 @@ class IosVolumeDialogPlugin @Inject constructor(
 
     override fun init(windowType: Int, callback: VolumeDialog.Callback) {
         pluginScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-        dialog = IosVolumeDialog(context,
+
+        isOnLeft = LineageSettings.Secure.getIntForUser(
+            context.contentResolver,
+            LineageSettings.Secure.VOLUME_PANEL_ON_LEFT,
+            0,
+            UserHandle.USER_CURRENT,
+        ) != 0
+
+        context.contentResolver.registerContentObserver(
+            LineageSettings.Secure.getUriFor(LineageSettings.Secure.VOLUME_PANEL_ON_LEFT),
+            false,
+            volumePanelOnLeftObserver,
+            UserHandle.USER_ALL,
+        )
+
+        createDialog()
+        controller.addCallback(controllerCallbacks, handler)
+    }
+
+    private fun createDialog() {
+        dialog = IosVolumeDialog(
+            context,
             onExpansionChanged = { expanded ->
                 isExpanded = expanded
                 rescheduleAutoDismiss()
@@ -100,9 +168,19 @@ class IosVolumeDialogPlugin @Inject constructor(
             onDismiss = {
                 isShowing = false
                 controller.notifyVisible(false)
-            }
-        )
-        controller.addCallback(controllerCallbacks, handler)
+            },
+        ).apply {
+            updateWindowGravity(isOnLeft)
+        }
+    }
+
+    private fun recreateDialog() {
+        val wasShowing = isShowing
+        dialog?.quickDismiss()
+        dialog = null
+        isShowing = false
+        createDialog()
+        if (wasShowing) showDialog()
     }
 
     private fun showDialog() {
@@ -140,6 +218,7 @@ class IosVolumeDialogPlugin @Inject constructor(
 
     override fun destroy() {
         controller.removeCallback(controllerCallbacks)
+        context.contentResolver.unregisterContentObserver(volumePanelOnLeftObserver)
         autoDismissJob?.cancel()
         dialog?.quickDismiss()
         dialog = null

@@ -38,12 +38,6 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 
-/**
- * iOS-style volume overlay dialog.
- *
- * Hosts a Compose hierarchy ([IosVolumePanelScreen]) inside a
- * TYPE_VOLUME_OVERLAY window. Exposes [dismissAnimated] and [quickDismiss].
- */
 class IosVolumeDialog(
     context: Context,
     private val onExpansionChanged: (Boolean) -> Unit,
@@ -52,7 +46,6 @@ class IosVolumeDialog(
     private val onDismiss: () -> Unit,
 ) : Dialog(context), LifecycleOwner, SavedStateRegistryOwner {
 
-    // ── Lifecycle / SavedState for Compose ──────────────────────────────────
     private val lifecycleRegistry = LifecycleRegistry(this)
     private val savedStateRegistryController = SavedStateRegistryController.create(this)
 
@@ -60,9 +53,13 @@ class IosVolumeDialog(
     override val savedStateRegistry: SavedStateRegistry
         get() = savedStateRegistryController.savedStateRegistry
 
-    // ── Dismiss state (read by Compose) ────────────────────────────────────
     var dismissTrigger by mutableStateOf(false)
         private set
+
+    var expandTrigger by mutableStateOf(false)
+        private set
+
+    var isLeftSide by mutableStateOf(false)
 
     init {
         savedStateRegistryController.performRestore(null)
@@ -91,7 +88,7 @@ class IosVolumeDialog(
 
         val lp = win.attributes
         lp.format = PixelFormat.TRANSLUCENT
-        lp.gravity = Gravity.CENTER_VERTICAL or Gravity.END
+        lp.gravity = Gravity.CENTER_VERTICAL or if (isLeftSide) Gravity.START else Gravity.END
         lp.title = "IosVolumeDialog"
         lp.windowAnimations = -1
         lp.width = WindowManager.LayoutParams.WRAP_CONTENT
@@ -102,13 +99,14 @@ class IosVolumeDialog(
             WindowManager.LayoutParams.WRAP_CONTENT,
         )
 
-        // Compose view -------------------------------------------------------
         val composeView = ComposeView(context).apply {
             setViewTreeLifecycleOwner(this@IosVolumeDialog)
             setViewTreeSavedStateRegistryOwner(this@IosVolumeDialog)
             setContent {
                 IosVolumePanelScreen(
                     dismissTrigger = dismissTrigger,
+                    expandTrigger = expandTrigger,
+                    isLeftSide = isLeftSide,
                     onExpansionChanged = onExpansionChanged,
                     onInteractionStart = onInteractionStart,
                     onInteractionEnd = onInteractionEnd,
@@ -117,6 +115,7 @@ class IosVolumeDialog(
                         dismiss()
                         onDismiss()
                     },
+                    onExpandConsumed = { expandTrigger = false },
                 )
             }
         }
@@ -143,13 +142,21 @@ class IosVolumeDialog(
         super.onStop()
     }
 
-    /** Triggers on-screen dismiss animation then calls Dialog.dismiss(). */
     fun dismissAnimated() {
         dismissTrigger = true
-        // The screen observes dismissTrigger and calls onDismissed() after animation
     }
 
-    /** Immediately dismisses without animation (e.g. screen off). */
+    fun expandPanel() {
+        expandTrigger = true
+    }
+
+    fun updateWindowGravity(isLeftSide: Boolean) {
+        this.isLeftSide = isLeftSide
+        window?.setGravity(
+            (if (isLeftSide) Gravity.START else Gravity.END) or Gravity.CENTER_VERTICAL
+        )
+    }
+
     fun quickDismiss() {
         dismissTrigger = false
         if (isShowing) dismiss()

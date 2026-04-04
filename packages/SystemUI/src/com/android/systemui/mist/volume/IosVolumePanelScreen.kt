@@ -16,13 +16,18 @@
 
 package com.android.systemui.mist.volume
 
-import android.app.NotificationManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.database.ContentObserver
+import android.media.AppVolume
 import android.media.AudioManager
+import android.os.Handler
+import android.os.Looper
+import android.os.UserHandle
 import android.os.Vibrator
+import android.provider.Settings
 import android.view.HapticFeedbackConstants
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
@@ -74,8 +79,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -86,66 +93,49 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.android.systemui.res.R
+import com.android.systemui.volume.dialog.sliders.ui.compose.rememberGradientColorMode
+import com.android.systemui.volume.dialog.sliders.ui.compose.rememberGradientCustomColors
+import com.android.systemui.volume.dialog.sliders.ui.compose.rememberVolumeGradientEnabled
+import androidx.compose.material3.MaterialTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-// ─── Color palette ────────────────────────────────────────────────────────────
 private val IosPillShape       = RoundedCornerShape(percent = 50)
 private val IosCardShape       = RoundedCornerShape(percent = 50)
 private val IosRingerShape     = RoundedCornerShape(percent = 50)
 
 private class IosThemeColors(val isDark: Boolean) {
-    val trackBg         = if (isDark) Color(0xFF2C2C2E) else Color(0xFFE5E5EA)
-    val normalFill      = if (isDark) Color(0xFFFFFFFF) else Color(0xFF1C1C1E)
-    val silentFill      = Color(0xFFFF453A)
-    val vibrateFill     = Color(0xFF32D74B)
-    val ringFill        = Color(0xFFFF9F0A)
-    val alarmFill       = Color(0xFFFF6B00)
-    val divider         = if (isDark) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.08f)
-    val iconTint        = if (isDark) Color.White else Color(0xFF1C1C1E)
-    val labelColor      = if (isDark) Color.White.copy(alpha = 0.60f) else Color.Black.copy(alpha = 0.60f)
-    
-    // Smoothly calculate what color the icon inside the slider should be based on its fill percentage
+    val trackBg           = if (isDark) Color(0xFF2C2C2E) else Color(0xFFE5E5EA)
+    val glassBg           = if (isDark) Color(0xBF2C2C2E) else Color(0xCCF2F2F7)
+    val glassShimmer      = if (isDark) Color(0x14FFFFFF) else Color(0x0AFFFFFF)
+    val normalFill        = if (isDark) Color(0xFFFFFFFF) else Color(0xFF1C1C1E)
+    val pillSelectedBg    = if (isDark) Color(0xFF48484A) else Color(0xFFD1D1D6)
+    val divider           = if (isDark) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.08f)
+    val iconTint          = if (isDark) Color.White else Color(0xFF1C1C1E)
+    val labelColor        = if (isDark) Color.White.copy(alpha = 0.60f) else Color.Black.copy(alpha = 0.60f)
+    val silentIconTint    = Color(0xFFFF453A)
+    val vibrateIconTint   = Color(0xFF32D74B)
+
     fun getDynamicIconTint(fraction: Float, isNormalColor: Boolean): Color {
         val isCovered = fraction > 0.15f
         return when {
-            isCovered -> {
-                // If it's normal volume fill and dark mode, the fill is White! So icon must be Black.
-                if (isNormalColor && isDark) Color(0xFF1C1C1E) else Color.White
-            }
-            else -> {
-                // Not covered. Just draw it against the track.
-                if (isDark) Color(0xFF8E8E93) else Color(0xFF8E8E93)
-            }
+            isCovered -> if (isNormalColor && isDark) Color(0xFF1C1C1E) else Color.White
+            else      -> Color(0xFF8E8E93)
         }
     }
 }
 
-/**
- * Root Compose screen for the iOS-style volume panel.
- *
- * Layout:
- * ```
- * ┌──────────────────────┐  ← slide in from right
- * │   [Media Slider]     │  (always visible, compact)
- * │                      │
- * │   ↕ expand ↕         │
- * │   [Ring Slider]      │
- * │   [Alarm Slider]     │
- * │   [Call Slider]      │
- * │   ┌────────────────┐ │
- * │   │ 🔔 〜  🔊      │ │  ← ringer mode row
- * │   └────────────────┘ │
- * ```
- */
 @Composable
 fun IosVolumePanelScreen(
     dismissTrigger: Boolean,
+    expandTrigger: Boolean = false,
+    isLeftSide: Boolean = false,
     onExpansionChanged: (Boolean) -> Unit,
     onInteractionStart: () -> Unit,
     onInteractionEnd: () -> Unit,
     onDismissed: () -> Unit,
+    onExpandConsumed: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val view = LocalView.current
@@ -159,7 +149,37 @@ fun IosVolumePanelScreen(
     }
     val hasVibrator = remember { vibrator?.hasVibrator() == true }
 
-    // ─── Volume state ──────────────────────────────────────────────────────
+    var hapticEnabled by remember {
+        mutableStateOf(
+            Settings.Secure.getIntForUser(
+                context.contentResolver,
+                Settings.Secure.VOLUME_DIALOG_HAPTIC_FEEDBACK,
+                1,
+                UserHandle.USER_CURRENT,
+            ) != 0
+        )
+    }
+    DisposableEffect(Unit) {
+        val handler = Handler(Looper.getMainLooper())
+        val observer = object : ContentObserver(handler) {
+            override fun onChange(selfChange: Boolean) {
+                hapticEnabled = Settings.Secure.getIntForUser(
+                    context.contentResolver,
+                    Settings.Secure.VOLUME_DIALOG_HAPTIC_FEEDBACK,
+                    1,
+                    UserHandle.USER_CURRENT,
+                ) != 0
+            }
+        }
+        context.contentResolver.registerContentObserver(
+            Settings.Secure.getUriFor(Settings.Secure.VOLUME_DIALOG_HAPTIC_FEEDBACK),
+            false,
+            observer,
+            UserHandle.USER_ALL,
+        )
+        onDispose { context.contentResolver.unregisterContentObserver(observer) }
+    }
+
     fun vol(stream: Int): Float {
         val max = audioManager.getStreamMaxVolume(stream).toFloat()
         val cur = audioManager.getStreamVolume(stream).toFloat()
@@ -172,11 +192,52 @@ fun IosVolumePanelScreen(
     var callVol     by remember { mutableFloatStateOf(vol(AudioManager.STREAM_VOICE_CALL)) }
     var ringerMode  by remember { mutableIntStateOf(audioManager.ringerMode) }
 
-    // ─── Expansion & dismiss state ─────────────────────────────────────────
+    var showAppVolume by remember {
+        mutableStateOf(
+            Settings.System.getIntForUser(
+                context.contentResolver,
+                Settings.System.SHOW_APP_VOLUME,
+                0,
+                UserHandle.USER_CURRENT,
+            ) != 0
+        )
+    }
+    DisposableEffect(Unit) {
+        val handler = Handler(Looper.getMainLooper())
+        val appVolObserver = object : ContentObserver(handler) {
+            override fun onChange(selfChange: Boolean) {
+                showAppVolume = Settings.System.getIntForUser(
+                    context.contentResolver,
+                    Settings.System.SHOW_APP_VOLUME,
+                    0,
+                    UserHandle.USER_CURRENT,
+                ) != 0
+            }
+        }
+        context.contentResolver.registerContentObserver(
+            Settings.System.getUriFor(Settings.System.SHOW_APP_VOLUME),
+            false,
+            appVolObserver,
+            UserHandle.USER_ALL,
+        )
+        onDispose { context.contentResolver.unregisterContentObserver(appVolObserver) }
+    }
+
+    var activeAppVolumes by remember { mutableStateOf<List<AppVolume>>(emptyList()) }
+
+    fun refreshAppVolumes() {
+        if (showAppVolume) {
+            activeAppVolumes = try {
+                audioManager.listAppVolumes().filter { it.isActive }
+            } catch (_: Exception) { emptyList() }
+        } else {
+            activeAppVolumes = emptyList()
+        }
+    }
+
     var expanded  by remember { mutableStateOf(false) }
     var visible   by remember { mutableStateOf(true) }
 
-    // Trigger dismiss animation when plugin requests it
     LaunchedEffect(dismissTrigger) {
         if (dismissTrigger) {
             visible = false
@@ -185,10 +246,28 @@ fun IosVolumePanelScreen(
         }
     }
 
-    // Notify plugin of expansion changes
     LaunchedEffect(expanded) { onExpansionChanged(expanded) }
 
-    // ─── Broadcast listener ────────────────────────────────────────────────
+    LaunchedEffect(expandTrigger) {
+        if (expandTrigger && !expanded) {
+            expanded = true
+            onExpandConsumed()
+        } else if (expandTrigger) {
+            onExpandConsumed()
+        }
+    }
+
+    LaunchedEffect(expanded, showAppVolume) {
+        if (expanded && showAppVolume) {
+            while (true) {
+                refreshAppVolumes()
+                delay(1000)
+            }
+        } else {
+            activeAppVolumes = emptyList()
+        }
+    }
+
     DisposableEffect(Unit) {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context?, intent: Intent?) {
@@ -199,6 +278,7 @@ fun IosVolumePanelScreen(
                         ringVol   = vol(AudioManager.STREAM_RING)
                         alarmVol  = vol(AudioManager.STREAM_ALARM)
                         callVol   = vol(AudioManager.STREAM_VOICE_CALL)
+                        refreshAppVolumes()
                     }
                 }
             }
@@ -211,7 +291,6 @@ fun IosVolumePanelScreen(
         onDispose { context.unregisterReceiver(receiver) }
     }
 
-    // ─── Helper — set stream volume ─────────────────────────────────────────
     fun setVol(stream: Int, fraction: Float) {
         val max = audioManager.getStreamMaxVolume(stream)
         val target = (fraction * max).toInt().coerceIn(0, max)
@@ -220,7 +299,6 @@ fun IosVolumePanelScreen(
         }
     }
 
-    // ─── Ringer cycle ──────────────────────────────────────────────────────
     fun cycleRingerMode() {
         val next = when (ringerMode) {
             AudioManager.RINGER_MODE_NORMAL  -> if (hasVibrator) AudioManager.RINGER_MODE_VIBRATE else AudioManager.RINGER_MODE_SILENT
@@ -231,7 +309,7 @@ fun IosVolumePanelScreen(
             try { audioManager.ringerModeInternal = next } catch (_: Exception) {}
         }
         ringerMode = next
-        view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        if (hapticEnabled) view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
     }
 
     fun setRingerMode(mode: Int) {
@@ -239,12 +317,16 @@ fun IosVolumePanelScreen(
             try { audioManager.ringerModeInternal = mode } catch (_: Exception) {}
         }
         ringerMode = mode
-        view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+        if (hapticEnabled) view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
     }
 
-    // ─── Panel width with spring animation on expand ────────────────────────
+    val numSliders = if (expanded) {
+        val apps = if (showAppVolume) activeAppVolumes.size else 0
+        3 + apps
+    } else 1
+
     val panelWidth by animateDpAsState(
-        targetValue = if (expanded) 140.dp else 46.dp,
+        targetValue = (38.dp * numSliders) + (12.dp * (numSliders - 1).coerceAtLeast(0)),
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
         label = "panelWidth"
     )
@@ -255,43 +337,53 @@ fun IosVolumePanelScreen(
         label = "panelHeight"
     )
 
-    // ─── Root: full-height overlay with the panel aligned to the right ──────
     AnimatedVisibility(
         visible = visible,
         enter = slideInHorizontally(
             animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMediumLow),
-            initialOffsetX = { it }
+            initialOffsetX = { if (isLeftSide) -it else it }
         ) + fadeIn(tween(200)),
         exit = slideOutHorizontally(
             animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium),
-            targetOffsetX = { it }
+            targetOffsetX = { if (isLeftSide) -it else it }
         ) + fadeOut(tween(200)),
     ) {
         Box(
             modifier = Modifier
+                .then(
+                    if (isLeftSide) Modifier.padding(start = 12.dp)
+                    else Modifier.padding(end = 12.dp)
+                )
                 .height(panelHeight)
-                .width(panelWidth)
-                .padding(end = 12.dp),
-            contentAlignment = Alignment.CenterEnd,
+                .width(panelWidth),
+            contentAlignment = if (isLeftSide) Alignment.CenterStart else Alignment.CenterEnd,
         ) {
             val isDark = isSystemInDarkTheme()
             val colors = remember(isDark) { IosThemeColors(isDark) }
             IosVolumeCard(
-                colors         = colors,
-                expanded       = expanded,
-                mediaVol       = mediaVol,
-                ringVol        = ringVol,
-                alarmVol       = alarmVol,
-                callVol        = callVol,
-                ringerMode     = ringerMode,
-                hasVibrator    = hasVibrator,
-                onExpandToggle = { expanded = !expanded },
-                onCycleRinger  = { cycleRingerMode() },
-                onSetRinger    = { setRingerMode(it) },
-                onMediaDrag    = { f -> mediaVol = f;  setVol(AudioManager.STREAM_MUSIC,       f) },
-                onRingDrag     = { f -> ringVol  = f;  setVol(AudioManager.STREAM_RING,        f) },
-                onAlarmDrag    = { f -> alarmVol = f;  setVol(AudioManager.STREAM_ALARM,       f) },
-                onCallDrag     = { f -> callVol  = f;  setVol(AudioManager.STREAM_VOICE_CALL,  f) },
+                colors             = colors,
+                expanded           = expanded,
+                isLeftSide         = isLeftSide,
+                hapticEnabled      = hapticEnabled,
+                mediaVol           = mediaVol,
+                ringVol            = ringVol,
+                alarmVol           = alarmVol,
+                callVol            = callVol,
+                ringerMode         = ringerMode,
+                hasVibrator        = hasVibrator,
+                activeAppVolumes   = activeAppVolumes,
+                onExpandToggle     = { expanded = !expanded },
+                onCycleRinger      = { cycleRingerMode() },
+                onSetRinger        = { setRingerMode(it) },
+                onMediaDrag        = { f -> mediaVol = f;  setVol(AudioManager.STREAM_MUSIC,      f) },
+                onRingDrag         = { f -> ringVol  = f;  setVol(AudioManager.STREAM_RING,       f) },
+                onAlarmDrag        = { f -> alarmVol = f;  setVol(AudioManager.STREAM_ALARM,      f) },
+                onCallDrag         = { f -> callVol  = f;  setVol(AudioManager.STREAM_VOICE_CALL, f) },
+                onAppVolumeDrag    = { pkg, f ->
+                    scope.launch(Dispatchers.IO) {
+                        try { audioManager.setAppVolume(pkg, f) } catch (_: Exception) {}
+                    }
+                },
                 onInteractionStart = onInteractionStart,
                 onInteractionEnd   = onInteractionEnd,
             )
@@ -299,20 +391,19 @@ fun IosVolumePanelScreen(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Volume card
-// ─────────────────────────────────────────────────────────────────────────────
-
 @Composable
 private fun IosVolumeCard(
     colors: IosThemeColors,
     expanded: Boolean,
+    isLeftSide: Boolean = false,
+    hapticEnabled: Boolean = true,
     mediaVol: Float,
     ringVol: Float,
     alarmVol: Float,
     callVol: Float,
     ringerMode: Int,
     hasVibrator: Boolean,
+    activeAppVolumes: List<AppVolume> = emptyList(),
     onExpandToggle: () -> Unit,
     onCycleRinger: () -> Unit,
     onSetRinger: (Int) -> Unit,
@@ -320,18 +411,33 @@ private fun IosVolumeCard(
     onRingDrag: (Float) -> Unit,
     onAlarmDrag: (Float) -> Unit,
     onCallDrag: (Float) -> Unit,
+    onAppVolumeDrag: (String, Float) -> Unit = { _, _ -> },
     onInteractionStart: () -> Unit,
     onInteractionEnd: () -> Unit,
 ) {
     val isRingSilenced = ringerMode == AudioManager.RINGER_MODE_SILENT
     val isRingVibrate  = ringerMode == AudioManager.RINGER_MODE_VIBRATE
 
+    val columnAlignment = if (isLeftSide) Alignment.Start else Alignment.End
+
+    val gradientEnabled = rememberVolumeGradientEnabled()
+    val gradientColors: List<Color>? = if (gradientEnabled) {
+        if (rememberGradientColorMode() == 1) {
+            val (start, end) = rememberGradientCustomColors()
+            listOf(start.copy(alpha = 1f), end.copy(alpha = 1f))
+        } else {
+            listOf(
+                MaterialTheme.colorScheme.primary,
+                MaterialTheme.colorScheme.secondary,
+            )
+        }
+    } else null
+
     Column(
         modifier = Modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.End,
+        horizontalAlignment = columnAlignment,
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        // ── Expand / collapse toggle button ──────────────────────────────
         Box(
             modifier = Modifier
                 .size(width = 34.dp, height = 24.dp)
@@ -350,68 +456,132 @@ private fun IosVolumeCard(
             )
         }
 
-        // ── Sliders Row ─────────────────────────────────────────────
         Row(
             modifier = Modifier.weight(1f),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.Bottom,
         ) {
-            // Expanded sliders pop out to the left
-            if (expanded) {
-                // Alarm
+            if (isLeftSide) {
                 IosVolumeSlider(
                     colors = colors,
-                    fraction = alarmVol,
-                    fillColor = colors.alarmFill,
-                    iconRes = R.drawable.ic_volume_alarm,
-                    onDrag = onAlarmDrag,
-                    onLongPress = {},
+                    fraction = mediaVol,
+                    fillColor = colors.normalFill,
+                    gradientColors = gradientColors,
+                    iconRes = if (mediaVol <= 0f) R.drawable.ic_volume_media_mute else R.drawable.ic_volume_media,
+                    hapticEnabled = hapticEnabled,
+                    onDrag = onMediaDrag,
+                    onLongPress = onCycleRinger,
                     onInteractionStart = onInteractionStart,
                     onInteractionEnd = onInteractionEnd,
                     modifier = Modifier.weight(1f).fillMaxHeight(),
                 )
-
-                // Ring
+                if (expanded) {
+                    IosVolumeSlider(
+                        colors = colors,
+                        fraction = if (isRingSilenced || isRingVibrate) 0f else ringVol,
+                        fillColor = if (isRingSilenced || isRingVibrate) Color.Transparent else colors.normalFill,
+                        gradientColors = if (isRingSilenced || isRingVibrate) null else gradientColors,
+                        iconRes = when {
+                            isRingSilenced -> R.drawable.ic_volume_off
+                            isRingVibrate  -> R.drawable.ic_volume_ringer_vibrate
+                            else           -> R.drawable.ic_volume_ringer
+                        },
+                        enabled = !isRingSilenced && !isRingVibrate,
+                        hapticEnabled = hapticEnabled,
+                        onDrag = onRingDrag,
+                        onLongPress = onCycleRinger,
+                        onInteractionStart = onInteractionStart,
+                        onInteractionEnd = onInteractionEnd,
+                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                    )
+                    IosVolumeSlider(
+                        colors = colors,
+                        fraction = alarmVol,
+                        fillColor = colors.normalFill,
+                        gradientColors = gradientColors,
+                        iconRes = R.drawable.ic_volume_alarm,
+                        hapticEnabled = hapticEnabled,
+                        onDrag = onAlarmDrag,
+                        onLongPress = {},
+                        onInteractionStart = onInteractionStart,
+                        onInteractionEnd = onInteractionEnd,
+                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                    )
+                    for (appVol in activeAppVolumes) {
+                        IosAppVolumeSlider(
+                            colors = colors,
+                            appVolume = appVol,
+                            gradientColors = gradientColors,
+                            hapticEnabled = hapticEnabled,
+                            onDrag = { f -> onAppVolumeDrag(appVol.packageName, f) },
+                            onInteractionStart = onInteractionStart,
+                            onInteractionEnd = onInteractionEnd,
+                            modifier = Modifier.weight(1f).fillMaxHeight(),
+                        )
+                    }
+                }
+            } else {
+                if (expanded) {
+                    for (appVol in activeAppVolumes.reversed()) {
+                        IosAppVolumeSlider(
+                            colors = colors,
+                            appVolume = appVol,
+                            gradientColors = gradientColors,
+                            hapticEnabled = hapticEnabled,
+                            onDrag = { f -> onAppVolumeDrag(appVol.packageName, f) },
+                            onInteractionStart = onInteractionStart,
+                            onInteractionEnd = onInteractionEnd,
+                            modifier = Modifier.weight(1f).fillMaxHeight(),
+                        )
+                    }
+                    IosVolumeSlider(
+                        colors = colors,
+                        fraction = alarmVol,
+                        fillColor = colors.normalFill,
+                        gradientColors = gradientColors,
+                        iconRes = R.drawable.ic_volume_alarm,
+                        hapticEnabled = hapticEnabled,
+                        onDrag = onAlarmDrag,
+                        onLongPress = {},
+                        onInteractionStart = onInteractionStart,
+                        onInteractionEnd = onInteractionEnd,
+                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                    )
+                    IosVolumeSlider(
+                        colors = colors,
+                        fraction = if (isRingSilenced || isRingVibrate) 0f else ringVol,
+                        fillColor = if (isRingSilenced || isRingVibrate) Color.Transparent else colors.normalFill,
+                        gradientColors = if (isRingSilenced || isRingVibrate) null else gradientColors,
+                        iconRes = when {
+                            isRingSilenced -> R.drawable.ic_volume_off
+                            isRingVibrate  -> R.drawable.ic_volume_ringer_vibrate
+                            else           -> R.drawable.ic_volume_ringer
+                        },
+                        enabled = !isRingSilenced && !isRingVibrate,
+                        hapticEnabled = hapticEnabled,
+                        onDrag = onRingDrag,
+                        onLongPress = onCycleRinger,
+                        onInteractionStart = onInteractionStart,
+                        onInteractionEnd = onInteractionEnd,
+                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                    )
+                }
                 IosVolumeSlider(
                     colors = colors,
-                    fraction = if (isRingSilenced || isRingVibrate) 0f else ringVol,
-                    fillColor = when {
-                        isRingSilenced -> colors.silentFill
-                        isRingVibrate  -> colors.vibrateFill
-                        else           -> colors.ringFill
-                    },
-                    iconRes = when {
-                        isRingSilenced -> R.drawable.ic_volume_off
-                        isRingVibrate  -> R.drawable.ic_volume_ringer_vibrate
-                        else           -> R.drawable.ic_volume_ringer
-                    },
-                    enabled = !isRingSilenced && !isRingVibrate,
-                    onDrag = onRingDrag,
+                    fraction = mediaVol,
+                    fillColor = colors.normalFill,
+                    gradientColors = gradientColors,
+                    iconRes = if (mediaVol <= 0f) R.drawable.ic_volume_media_mute else R.drawable.ic_volume_media,
+                    hapticEnabled = hapticEnabled,
+                    onDrag = onMediaDrag,
                     onLongPress = onCycleRinger,
                     onInteractionStart = onInteractionStart,
                     onInteractionEnd = onInteractionEnd,
                     modifier = Modifier.weight(1f).fillMaxHeight(),
                 )
             }
-
-            // Media (always visible, on the far right)
-            IosVolumeSlider(
-                colors = colors,
-                fraction = mediaVol,
-                fillColor = colors.normalFill,
-                iconRes = when {
-                    mediaVol <= 0f -> R.drawable.ic_volume_off
-                    else           -> R.drawable.ic_volume_ringer
-                },
-                onDrag = onMediaDrag,
-                onLongPress = onCycleRinger,
-                onInteractionStart = onInteractionStart,
-                onInteractionEnd = onInteractionEnd,
-                modifier = Modifier.weight(1f).fillMaxHeight(),
-            )
         }
 
-        // ── Ringer pills (bottom, full width) ───────────────────────
         AnimatedVisibility(
             visible = expanded,
             enter = expandVertically(spring(Spring.DampingRatioMediumBouncy)) + fadeIn(tween(200)),
@@ -427,10 +597,6 @@ private fun IosVolumeCard(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Single vertical volume slider
-// ─────────────────────────────────────────────────────────────────────────────
-
 @Composable
 private fun IosVolumeSlider(
     colors: IosThemeColors,
@@ -439,6 +605,8 @@ private fun IosVolumeSlider(
     iconRes: Int,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    hapticEnabled: Boolean = true,
+    gradientColors: List<Color>? = null,
     onDrag: (Float) -> Unit,
     onLongPress: () -> Unit,
     onInteractionStart: () -> Unit,
@@ -446,11 +614,15 @@ private fun IosVolumeSlider(
 ) {
     var dragFraction by remember { mutableFloatStateOf(fraction.coerceIn(0f, 1f)) }
     var isDragging by remember { mutableStateOf(false) }
+    var externalPulse by remember { mutableStateOf(false) }
 
-    // External volume changes sync to dragFraction when not currently dragging
     LaunchedEffect(fraction) {
         if (!isDragging) {
             dragFraction = fraction.coerceIn(0f, 1f)
+            // Trigger the elastic 1.05x widening scale for a short duration
+            externalPulse = true
+            delay(150)
+            externalPulse = false
         }
     }
 
@@ -461,14 +633,13 @@ private fun IosVolumeSlider(
         label = "sliderFraction"
     )
     
-    // Elastic overscroll and active squish scaling
     val overscrollAmount = when {
         target > 1f -> target - 1f
         target < 0f -> 0f - target
         else -> 0f
     }
     val targetScaleY = 1f + (overscrollAmount * 0.4f)
-    val targetScaleX = if (isDragging) 1.05f else 1f
+    val targetScaleX = if (isDragging || externalPulse) 1.05f else 1f
 
     val dynamicTint by animateColorAsState(
         targetValue = colors.getDynamicIconTint(animFraction, fillColor == colors.normalFill),
@@ -491,7 +662,9 @@ private fun IosVolumeSlider(
         label = "fillColor"
     )
 
-    val view = LocalView.current // Get LocalView.current here
+    val view = LocalView.current
+
+    var lastHapticStep by remember { mutableIntStateOf(-1) }
 
     Box(
         modifier = modifier
@@ -500,33 +673,57 @@ private fun IosVolumeSlider(
             .scale(scaleX, scaleY)
             .shadow(elevation = 12.dp, shape = IosPillShape)
             .clip(IosPillShape)
-            .background(colors.trackBg)
-            // Intercept scroll so dragging doesn't scroll QS using drag start/end callbacks directly
+            .drawBehind {
+                drawRect(color = colors.glassBg)
+                val fillPx = size.height * animFraction
+                val unfilledTop = 0f
+                val unfilledBottom = size.height - fillPx
+                if (unfilledBottom > unfilledTop) {
+                    drawRect(
+                        brush = Brush.verticalGradient(
+                            colors = listOf(colors.glassShimmer, Color.Transparent),
+                            startY = unfilledTop,
+                            endY = unfilledBottom,
+                        ),
+                        topLeft = androidx.compose.ui.geometry.Offset(0f, unfilledTop),
+                        size = androidx.compose.ui.geometry.Size(size.width, unfilledBottom - unfilledTop),
+                    )
+                }
+            }
             .pointerInput(enabled) {
                 if (!enabled) return@pointerInput
                 detectVerticalDragGestures(
                     onDragStart = {
                         isDragging = true
+                        lastHapticStep = -1
                         view.parent?.requestDisallowInterceptTouchEvent(true)
                         onInteractionStart()
                     },
-                    onDragEnd   = {
+                    onDragEnd = {
                         isDragging = false
+                        lastHapticStep = -1
                         view.parent?.requestDisallowInterceptTouchEvent(false)
                         onInteractionEnd()
                     },
                     onDragCancel = {
                         isDragging = false
+                        lastHapticStep = -1
                         view.parent?.requestDisallowInterceptTouchEvent(false)
                         onInteractionEnd()
                     },
-                    onVerticalDrag = { change, dragAmount ->
+                    onVerticalDrag = { change, _ ->
                         change.consume()
                         val rawF = 1f - (change.position.y / size.height)
-                        // Allow dragging past limits to trigger elastic overscroll
                         dragFraction = rawF
                         val coercedF = rawF.coerceIn(0f, 1f)
                         onDrag(coercedF)
+                        if (hapticEnabled) {
+                            val step = (coercedF * 20).toInt()
+                            if (step != lastHapticStep) {
+                                lastHapticStep = step
+                                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                            }
+                        }
                     }
                 )
             }
@@ -541,16 +738,32 @@ private fun IosVolumeSlider(
                 )
             }
     ) {
-        // Fill bar (bottom → top)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .fillMaxHeight(animFraction)
                 .align(Alignment.BottomCenter)
-                .background(animFill, IosPillShape)
+                .then(
+                    if (gradientColors != null) {
+                        val alphaScale = if (enabled) 1f else 0.35f
+                        val scaledColors = gradientColors.map { it.copy(alpha = it.alpha * alphaScale) }
+                        Modifier
+                            .clip(IosPillShape)
+                            .drawBehind {
+                                drawRect(
+                                    brush = Brush.verticalGradient(
+                                        colors = scaledColors,
+                                        startY = size.height,
+                                        endY = 0f,
+                                    )
+                                )
+                            }
+                    } else {
+                        Modifier.background(animFill, IosPillShape)
+                    }
+                )
         )
 
-        // Icon at bottom of pill
         Icon(
             painter = painterResource(iconRes),
             contentDescription = null,
@@ -563,10 +776,6 @@ private fun IosVolumeSlider(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Ringer mode row  (mute / vibrate / normal pills)
-// ─────────────────────────────────────────────────────────────────────────────
-
 @Composable
 private fun IosRingerModeRow(
     colors: IosThemeColors,
@@ -577,37 +786,37 @@ private fun IosRingerModeRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(IosRingerShape)
-            .background(colors.trackBg)
+            .clip(IosCardShape)
+            .drawBehind { drawRect(color = colors.glassBg) }
             .padding(2.dp),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        // Silent
         RingerPill(
             colors = colors,
             iconRes = R.drawable.ic_volume_off,
             selected = ringerMode == AudioManager.RINGER_MODE_SILENT,
-            selectedColor = colors.silentFill,
+            selectedColor = colors.pillSelectedBg,
+            selectedIconTint = colors.silentIconTint,
             onClick = { onSetRinger(AudioManager.RINGER_MODE_SILENT) },
             modifier = Modifier.weight(1f),
         )
-        // Vibrate
         if (hasVibrator) {
             RingerPill(
                 colors = colors,
                 iconRes = R.drawable.ic_volume_ringer_vibrate,
                 selected = ringerMode == AudioManager.RINGER_MODE_VIBRATE,
-                selectedColor = colors.vibrateFill,
+                selectedColor = colors.pillSelectedBg,
+                selectedIconTint = colors.vibrateIconTint,
                 onClick = { onSetRinger(AudioManager.RINGER_MODE_VIBRATE) },
                 modifier = Modifier.weight(1f),
             )
         }
-        // Normal
         RingerPill(
             colors = colors,
             iconRes = R.drawable.ic_volume_ringer,
             selected = ringerMode == AudioManager.RINGER_MODE_NORMAL,
-            selectedColor = colors.normalFill,
+            selectedColor = colors.pillSelectedBg,
+            selectedIconTint = colors.iconTint,
             onClick = { onSetRinger(AudioManager.RINGER_MODE_NORMAL) },
             modifier = Modifier.weight(1f),
         )
@@ -620,6 +829,7 @@ private fun RingerPill(
     iconRes: Int,
     selected: Boolean,
     selectedColor: Color,
+    selectedIconTint: Color = colors.iconTint,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -627,6 +837,11 @@ private fun RingerPill(
         targetValue = if (selected) selectedColor else Color.Transparent,
         animationSpec = tween(200),
         label = "ringerPillBg",
+    )
+    val iconTint by animateColorAsState(
+        targetValue = if (selected) selectedIconTint else colors.labelColor,
+        animationSpec = tween(200),
+        label = "ringerPillIconTint",
     )
     Box(
         modifier = modifier
@@ -639,18 +854,40 @@ private fun RingerPill(
         Icon(
             painter = painterResource(iconRes),
             contentDescription = null,
-            tint = if (selected) {
-                // Determine contrasting icon color against the selected pill color
-                if (selectedColor == colors.normalFill && colors.isDark) Color(0xFF1C1C1E) else Color.White 
-            } else colors.labelColor,
+            tint = iconTint,
             modifier = Modifier.size(18.dp),
         )
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
+@Composable
+private fun IosAppVolumeSlider(
+    colors: IosThemeColors,
+    appVolume: AppVolume,
+    modifier: Modifier = Modifier,
+    gradientColors: List<Color>? = null,
+    hapticEnabled: Boolean = true,
+    onDrag: (Float) -> Unit,
+    onInteractionStart: () -> Unit,
+    onInteractionEnd: () -> Unit,
+) {
+    val iconRes = if (appVolume.isMuted || appVolume.volume <= 0f)
+        R.drawable.ic_volume_off
+    else
+        R.drawable.ic_volume_ringer
 
-// Removed StreamLabel helper to strictly match iOS styling
-
+    IosVolumeSlider(
+        colors          = colors,
+        fraction        = if (appVolume.isMuted) 0f else appVolume.volume.coerceIn(0f, 1f),
+        fillColor       = colors.normalFill,
+        gradientColors  = if (appVolume.isMuted) null else gradientColors,
+        iconRes         = iconRes,
+        enabled         = !appVolume.isMuted,
+        hapticEnabled   = hapticEnabled,
+        onDrag          = onDrag,
+        onLongPress     = {},
+        onInteractionStart = onInteractionStart,
+        onInteractionEnd   = onInteractionEnd,
+        modifier        = modifier,
+    )
+}

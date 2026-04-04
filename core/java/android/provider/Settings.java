@@ -13866,6 +13866,13 @@ public final class Settings {
         public static final String VOLUME_DIALOG_HAPTIC_FEEDBACK = "volume_dialog_haptic_feedback";
 
         /**
+         * Whether the iOS-style volume panel should auto-expand when a physical
+         * volume key is pressed. 0 = off (default), 1 = on.
+         * @hide
+         */
+        public static final String IOS_VOLUME_EXPAND_ON_KEY = "ios_volume_expand_on_key";
+
+        /**
          * What behavior should be invoked when the volume hush gesture is triggered
          * One of VOLUME_HUSH_OFF, VOLUME_HUSH_VIBRATE, VOLUME_HUSH_MUTE, VOLUME_HUSH_CYCLE.
          *
