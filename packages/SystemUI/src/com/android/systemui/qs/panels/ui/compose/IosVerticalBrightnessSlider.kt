@@ -31,25 +31,16 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -60,6 +51,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
@@ -67,8 +59,23 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import com.android.systemui.res.R
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import kotlin.math.abs
+import kotlin.math.pow
+
+private const val GAMMA = 2.2f
+
+private fun brightnessToFraction(brightness: Float, min: Float = 1f, max: Float = 255f): Float {
+    val normalized = ((brightness - min) / (max - min)).coerceIn(0f, 1f)
+    return normalized.pow(1f / GAMMA)
+}
+
+private fun fractionToBrightness(fraction: Float, min: Float = 1f, max: Float = 255f): Float {
+    val normalized = fraction.coerceIn(0f, 1f).pow(GAMMA)
+    return (min + normalized * (max - min)).coerceIn(min, max)
+}
 
 @Composable
 fun IosVerticalBrightnessSlider(modifier: Modifier = Modifier) {
@@ -77,35 +84,33 @@ fun IosVerticalBrightnessSlider(modifier: Modifier = Modifier) {
     val scope = rememberCoroutineScope()
     val cr: ContentResolver = context.contentResolver
 
+    @Suppress("UNUSED_VARIABLE")
     val pm = remember { context.getSystemService(Context.POWER_SERVICE) as PowerManager }
-    val brightnessRange = remember {
-        val min = try {
-            Settings.System.getIntForUser(cr, "screen_brightness_for_vr_10bit", 10, UserHandle.USER_CURRENT)
-        } catch (_: Exception) { 10 }
-        0f..255f
-    }
 
-    fun readBrightness(): Float {
-        return try {
-            Settings.System.getIntForUser(cr, Settings.System.SCREEN_BRIGHTNESS, 128, UserHandle.USER_CURRENT).toFloat()
-        } catch (_: Exception) { 128f }
-    }
+    val brightnessMin = 1f
+    val brightnessMax = 255f
 
-    fun readAutoMode(): Boolean {
-        return try {
-            Settings.System.getIntForUser(cr, Settings.System.SCREEN_BRIGHTNESS_MODE, 0, UserHandle.USER_CURRENT) ==
-                Settings.System.SCREEN_BRIGHTNESS_MODE_AUTOMATIC
-        } catch (_: Exception) { false }
-    }
+    fun readBrightness(): Float = try {
+        Settings.System.getIntForUser(
+            cr, Settings.System.SCREEN_BRIGHTNESS, 128, UserHandle.USER_CURRENT
+        ).toFloat().coerceIn(brightnessMin, brightnessMax)
+    } catch (_: Exception) { 128f }
+
+    fun readAutoMode(): Boolean = try {
+        Settings.System.getIntForUser(
+            cr, Settings.System.SCREEN_BRIGHTNESS_MODE, 0, UserHandle.USER_CURRENT
+        ) == Settings.System.SCREEN_BRIGHTNESS_MODE_AUTOMATIC
+    } catch (_: Exception) { false }
 
     var brightness by remember { mutableFloatStateOf(readBrightness()) }
-    var autoMode by remember { mutableStateOf(readAutoMode()) }
+    var autoMode   by remember { mutableStateOf(readAutoMode()) }
     var isDragging by remember { mutableStateOf(false) }
 
-    val targetFraction = (brightness - brightnessRange.start) / (brightnessRange.endInclusive - brightnessRange.start)
+    val targetFraction = brightnessToFraction(brightness, brightnessMin, brightnessMax)
+
     val animFraction by animateFloatAsState(
         targetValue = targetFraction,
-        animationSpec = tween(150),
+        animationSpec = tween(if (isDragging) 0 else 150),
         label = "BrightnessFraction"
     )
     val currentFraction = if (isDragging) targetFraction else animFraction
@@ -116,12 +121,18 @@ fun IosVerticalBrightnessSlider(modifier: Modifier = Modifier) {
             override fun onChange(selfChange: Boolean) {
                 if (!isDragging) {
                     brightness = readBrightness()
-                    autoMode = readAutoMode()
+                    autoMode   = readAutoMode()
                 }
             }
         }
-        cr.registerContentObserver(Settings.System.getUriFor(Settings.System.SCREEN_BRIGHTNESS), false, observer, UserHandle.USER_ALL)
-        cr.registerContentObserver(Settings.System.getUriFor(Settings.System.SCREEN_BRIGHTNESS_MODE), false, observer, UserHandle.USER_ALL)
+        cr.registerContentObserver(
+            Settings.System.getUriFor(Settings.System.SCREEN_BRIGHTNESS),
+            false, observer, UserHandle.USER_ALL
+        )
+        cr.registerContentObserver(
+            Settings.System.getUriFor(Settings.System.SCREEN_BRIGHTNESS_MODE),
+            false, observer, UserHandle.USER_ALL
+        )
         onDispose { cr.unregisterContentObserver(observer) }
     }
 
@@ -134,9 +145,24 @@ fun IosVerticalBrightnessSlider(modifier: Modifier = Modifier) {
         if (autoMode) MaterialTheme.colorScheme.onPrimary else Color(0xFF2C2C2E),
         label = "BrightnessIconTint"
     )
-    val iconRes = if (autoMode) R.drawable.ic_qs_brightness_auto_on else R.drawable.ic_qs_brightness_auto_off
+    val iconRes = if (autoMode) R.drawable.ic_qs_brightness_auto_on
+                  else          R.drawable.ic_qs_brightness_auto_off
 
-    var dragStartFraction by remember { mutableFloatStateOf(0f) }
+    fun yToBrightness(y: Float, heightPx: Int): Float {
+        val fraction = 1f - (y / heightPx).coerceIn(0f, 1f)
+        return fractionToBrightness(fraction, brightnessMin, brightnessMax)
+    }
+
+    fun writeBrightness(value: Float) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                Settings.System.putIntForUser(
+                    cr, Settings.System.SCREEN_BRIGHTNESS,
+                    value.toInt(), UserHandle.USER_CURRENT
+                )
+            } catch (_: Exception) {}
+        }
+    }
 
     Box(
         modifier = modifier
@@ -144,74 +170,69 @@ fun IosVerticalBrightnessSlider(modifier: Modifier = Modifier) {
             .clip(RoundedCornerShape(28.dp))
             .background(trackBgColor)
             .pointerInput(Unit) {
+                var longPressJob: Job? = null
+
                 awaitEachGesture {
-                    awaitFirstDown(requireUnconsumed = false)
+                    val down = awaitFirstDown(requireUnconsumed = false)
                     view.parent?.requestDisallowInterceptTouchEvent(true)
-                    waitForUpOrCancellation()
-                    view.parent?.requestDisallowInterceptTouchEvent(false)
-                }
-            }
-            .pointerInput(Unit) {
-                detectVerticalDragGestures(
-                    onDragStart = { offset ->
-                        isDragging = true
-                        val startY = offset.y
-                        dragStartFraction = 1f - (startY / size.height).coerceIn(0f, 1f)
-                        val newBrightness = (brightnessRange.start + dragStartFraction * (brightnessRange.endInclusive - brightnessRange.start))
-                                .coerceIn(brightnessRange.start, brightnessRange.endInclusive)
-                        brightness = newBrightness
-                        scope.launch(Dispatchers.IO) {
-                            try {
-                                Settings.System.putIntForUser(cr, Settings.System.SCREEN_BRIGHTNESS, newBrightness.toInt(), UserHandle.USER_CURRENT)
-                            } catch (_: Exception) {}
-                        }
-                    },
-                    onDragEnd = {
-                        isDragging = false
-                    },
-                    onDragCancel = {
-                        isDragging = false
-                    },
-                    onVerticalDrag = { change, _ ->
-                        change.consume()
-                        val fraction = 1f - (change.position.y / size.height).coerceIn(0f, 1f)
-                        val newBrightness = (brightnessRange.start + fraction * (brightnessRange.endInclusive - brightnessRange.start))
-                            .coerceIn(brightnessRange.start, brightnessRange.endInclusive)
-                        brightness = newBrightness
-                        scope.launch(Dispatchers.IO) {
-                            try {
-                                Settings.System.putIntForUser(cr, Settings.System.SCREEN_BRIGHTNESS, newBrightness.toInt(), UserHandle.USER_CURRENT)
-                            } catch (_: Exception) {}
-                        }
-                    }
-                )
-            }
-            .pointerInput(Unit) {
-                detectTapGestures(
-                    onTap = { offset ->
-                        val fraction = 1f - (offset.y / size.height).coerceIn(0f, 1f)
-                        val newBrightness = (brightnessRange.start + fraction * (brightnessRange.endInclusive - brightnessRange.start))
-                            .coerceIn(brightnessRange.start, brightnessRange.endInclusive)
-                        brightness = newBrightness
-                        scope.launch(Dispatchers.IO) {
-                            try {
-                                Settings.System.putIntForUser(cr, Settings.System.SCREEN_BRIGHTNESS, newBrightness.toInt(), UserHandle.USER_CURRENT)
-                            } catch (_: Exception) {}
-                        }
-                    },
-                    onLongPress = {
+
+                    val downBrightness = yToBrightness(down.position.y, size.height)
+                    brightness = downBrightness
+                    writeBrightness(downBrightness)
+
+                    longPressJob = scope.launch {
+                        delay(500)
                         val newAutoMode = !autoMode
                         autoMode = newAutoMode
-                        val mode = if (newAutoMode) Settings.System.SCREEN_BRIGHTNESS_MODE_AUTOMATIC
-                        else Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL
-                        scope.launch(Dispatchers.IO) {
+                        val mode = if (newAutoMode)
+                            Settings.System.SCREEN_BRIGHTNESS_MODE_AUTOMATIC
+                        else
+                            Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL
+                        launch(Dispatchers.IO) {
                             try {
-                                Settings.System.putIntForUser(cr, Settings.System.SCREEN_BRIGHTNESS_MODE, mode, UserHandle.USER_CURRENT)
+                                Settings.System.putIntForUser(
+                                    cr, Settings.System.SCREEN_BRIGHTNESS_MODE,
+                                    mode, UserHandle.USER_CURRENT
+                                )
                             } catch (_: Exception) {}
                         }
                         view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                     }
-                )
+
+                    var dragging = false
+
+                    try {
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Main)
+                            val currentPointer = event.changes.firstOrNull { it.id == down.id }
+                                ?: break
+
+                            if (!currentPointer.pressed) {
+                                longPressJob?.cancel()
+                                break
+                            }
+
+                            val dragAmount = currentPointer.position.y - down.position.y
+
+                            if (!dragging && abs(dragAmount) > viewConfiguration.touchSlop) {
+                                dragging = true
+                                isDragging = true
+                                longPressJob?.cancel()
+                            }
+
+                            if (dragging) {
+                                currentPointer.consume()
+                                val v = yToBrightness(currentPointer.position.y, size.height)
+                                brightness = v
+                                writeBrightness(v)
+                            }
+                        }
+                    } finally {
+                        longPressJob?.cancel()
+                        isDragging = false
+                        view.parent?.requestDisallowInterceptTouchEvent(false)
+                    }
+                }
             }
     ) {
         Box(
