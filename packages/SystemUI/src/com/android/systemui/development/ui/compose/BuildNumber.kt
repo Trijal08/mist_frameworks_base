@@ -36,6 +36,9 @@ import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CornerSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -362,6 +365,11 @@ fun BuildNumber(
                 } else false
             }
         }
+        .background(
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+            shape = RoundedCornerShape(percent = 50)
+        )
+        .padding(horizontal = 12.dp, vertical = 4.dp)
 
     val marquee = if (textToShow.isNotEmpty()) {
         base.basicMarquee(iterations = 1, initialDelayMillis = 2000)
