@@ -1177,6 +1177,7 @@ public class CentralSurfacesImpl implements CoreStartable, CentralSurfaces,
 
     private void attachCustomOverlays() {
         ViewGroup overlay = getScrimOverlayContainer();
+        ViewGroup root = (ViewGroup) getNotificationShadeWindowView();
 
         detachFromParent(mMediaViewController.getMediaArtScrim());
         detachFromParent(mPulseViewController.getPulseView());
@@ -1184,7 +1185,10 @@ public class CentralSurfacesImpl implements CoreStartable, CentralSurfaces,
         detachFromParent(mNowPlayingViewController.getNowPlayingView());
         detachFromParent(mChargingAnimationViewController.getChargingView());
 
-        overlay.addView(mMediaViewController.getMediaArtScrim(),
+        // Place Media Art in the true background (behind the lock screen scrim and clock)
+        View scrimBehind = root.findViewById(R.id.scrim_behind);
+        int scrimBehindIndex = Math.max(root.indexOfChild(scrimBehind), 0);
+        root.addView(mMediaViewController.getMediaArtScrim(), scrimBehindIndex,
                 new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
