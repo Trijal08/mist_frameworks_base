@@ -42,7 +42,7 @@ object PackageInstallerComposeBridge {
     ) {
         Log.e("PackageInstallerCompose", "==== CUSTOM UI LOG ==== setPackageInstallerContent called! App: $appName")
         val sizeMb = round((sizeBytes.toFloat() / (1024f * 1024f)) * 10f) / 10f
-        
+
         val appInfo = AppInfoData(
             name = appName,
             iconDrawable = appIcon,
@@ -67,12 +67,12 @@ object PackageInstallerComposeBridge {
                 )
             }
         }
-        
+
         activity.setContentView(composeView)
-        
+
         activity.window.apply {
             if (android.os.Build.VERSION.SDK_INT >= 31 && decorView != null) {
-                setBackgroundBlurRadius(120)
+                setBackgroundBlurRadius(130)
             }
             setDimAmount(0.05f)
             addFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)

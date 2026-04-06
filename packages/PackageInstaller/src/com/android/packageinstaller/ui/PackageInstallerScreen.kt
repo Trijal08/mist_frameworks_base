@@ -15,7 +15,7 @@
  */
 
 package com.android.packageinstaller.ui
- 
+
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
@@ -38,13 +38,13 @@ import kotlin.math.*
 import android.content.Context
 import android.content.pm.PackageManager
 import kotlinx.coroutines.delay
- 
+
 enum class InstallerPhase {
     CONFIRM, INSTALLING, INSTALL_SUCCESS, INSTALL_FAILED,
     UNINSTALL_CONFIRM, UNINSTALLING, UNINSTALL_SUCCESS, UNINSTALL_FAILED,
     UPDATE_CONFIRM, REINSTALL_CONFIRM, DOWNGRADE_CONFIRM
 }
- 
+
 data class AppInfoData(
     val name: String,
     val iconDrawable: android.graphics.drawable.Drawable?,
@@ -57,7 +57,7 @@ data class AppInfoData(
     val minSdk: Int,
     val isSystemApp: Boolean = false
 )
- 
+
 private fun apiToAndroidVersion(api: Int): String {
     return when (api) {
         35 -> "15"
@@ -73,7 +73,7 @@ private fun apiToAndroidVersion(api: Int): String {
         else -> if (api > 35) "Next" else "Old"
     }
 }
- 
+
 data class HyperThemeContext(
     val BgDeep: Color,
     val BgCard: Color,
@@ -87,12 +87,12 @@ data class HyperThemeContext(
     val AccentAmber: Color = Color(0xFFF59E0B),
     val AccentRed: Color = Color(0xFFEF4444)
 )
- 
+
 @Composable
 fun currentHyperTheme(): HyperThemeContext {
     val isDark = isSystemInDarkTheme()
     val colorScheme = MaterialTheme.colorScheme
-    
+
     return HyperThemeContext(
         BgDeep = Color.Transparent,
         BgCard = if (isDark) colorScheme.surface.copy(alpha = 0.45f) else Color.White.copy(alpha = 0.12f),
@@ -105,7 +105,7 @@ fun currentHyperTheme(): HyperThemeContext {
         AccentContainer = colorScheme.primaryContainer
     )
 }
- 
+
 @Composable
 fun PackageInstallerScreen(
     appInfo: AppInfoData,
@@ -117,18 +117,18 @@ fun PackageInstallerScreen(
     var phase by remember { mutableStateOf(initialPhase) }
     val progress by remember { mutableFloatStateOf(0f) }
     val theme = currentHyperTheme()
- 
+
     Box(
         modifier = Modifier.fillMaxSize().background(theme.BgDeep),
         contentAlignment = Alignment.BottomCenter
     ) {
         AnimatedMeshBackground(theme.Accent)
- 
+
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 32.dp) 
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 50.dp)
         ) {
             AnimatedContent(
                 targetState = phase,
@@ -139,14 +139,14 @@ fun PackageInstallerScreen(
                 label = "phase"
             ) { p ->
                 when (p) {
-                    InstallerPhase.CONFIRM, InstallerPhase.UPDATE_CONFIRM, 
-                    InstallerPhase.REINSTALL_CONFIRM, InstallerPhase.DOWNGRADE_CONFIRM -> 
+                    InstallerPhase.CONFIRM, InstallerPhase.UPDATE_CONFIRM,
+                    InstallerPhase.REINSTALL_CONFIRM, InstallerPhase.DOWNGRADE_CONFIRM ->
                         ConfirmSheet(theme, appInfo, p, onInstall = onInstallConfirmed, onDismiss = onDismiss)
-                    
+
                     InstallerPhase.INSTALLING -> ProgressSheet(theme, appInfo, progress, isUninstall = false)
                     InstallerPhase.INSTALL_SUCCESS -> InstallSuccessSheet(theme, appInfo, onOpenApp, onDismiss)
                     InstallerPhase.INSTALL_FAILED -> InstallFailedSheet(theme, appInfo, { phase = InstallerPhase.CONFIRM }, onDismiss)
-                    
+
                     InstallerPhase.UNINSTALL_CONFIRM -> UninstallConfirmSheet(theme, appInfo, onInstallConfirmed, onDismiss)
                     InstallerPhase.UNINSTALLING -> ProgressSheet(theme, appInfo, progress, isUninstall = true)
                     InstallerPhase.UNINSTALL_SUCCESS -> UninstallSuccessSheet(theme, appInfo, onDismiss)
@@ -156,7 +156,7 @@ fun PackageInstallerScreen(
         }
     }
 }
- 
+
 @Composable
 fun AnimatedMeshBackground(accentColor: Color) {
     val infiniteTransition = rememberInfiniteTransition(label = "mesh")
@@ -164,7 +164,7 @@ fun AnimatedMeshBackground(accentColor: Color) {
     val phase2 by infiniteTransition.animateFloat(0f, 1f, infiniteRepeatable(tween(24000, easing = LinearEasing), RepeatMode.Restart), "p2")
     val isDark = isSystemInDarkTheme()
     val alphaBoost = if (isDark) 0.2f else 0.5f
-    
+
     Canvas(Modifier.fillMaxSize().blur(140.dp)) {
         val w = size.width
         val h = size.height
@@ -180,14 +180,14 @@ fun AnimatedMeshBackground(accentColor: Color) {
         )
     }
 }
- 
+
 @Composable
 fun GlassCard(theme: HyperThemeContext, content: @Composable ColumnScope.() -> Unit) {
     val isDark = isSystemInDarkTheme()
     Box(
         Modifier.fillMaxWidth()
             .then(if (isDark) Modifier else Modifier.padding(2.dp))
-            .clip(RoundedCornerShape(44.dp))
+            .clip(RoundedCornerShape(32.dp))
             .background(theme.BgCard)
             .border(
                 1.5.dp,
@@ -200,48 +200,50 @@ fun GlassCard(theme: HyperThemeContext, content: @Composable ColumnScope.() -> U
                     start = Offset(0f, 0f),
                     end = Offset(800f, 800f)
                 ),
-                RoundedCornerShape(44.dp)
+                RoundedCornerShape(32.dp)
             )
     ) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 34.dp), content = content)
+       Column(Modifier.fillMaxWidth().padding(horizontal = 25.dp).padding(top = 30.dp, bottom = 40.dp), content = content)
     }
 }
- 
+
 @Composable
 fun InnerTuneHeader(app: AppInfoData, theme: HyperThemeContext, scale: Float = 1f) {
-    Column(
+    Row(
         modifier = Modifier.fillMaxWidth().scale(scale),
-        horizontalAlignment = Alignment.CenterHorizontally
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        AppIconBadgeView(app.iconDrawable, size = 88.dp, glowing = false, accent = theme.Accent)
-        Spacer(Modifier.height(24.dp))
-        Text(
-            app.name,
-            color = theme.TextPrimary,
-            fontSize = 30.sp,
-            fontWeight = FontWeight.ExtraBold,
-            textAlign = TextAlign.Center,
-            letterSpacing = (-1.0).sp
-        )
-        Text(
-            app.packageName,
-            color = theme.TextSecondary,
-            fontSize = 14.sp,
-            textAlign = TextAlign.Center,
-            maxLines = 1,
-            fontWeight = FontWeight.Medium,
-            overflow = TextOverflow.Ellipsis
-        )
-        if (app.isSystemApp) {
-            Spacer(Modifier.height(10.dp))
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Box(Modifier.size(8.dp).clip(CircleShape).background(theme.AccentAmber))
-                Text("System Component", color = theme.AccentAmber, fontSize = 12.sp, fontWeight = FontWeight.Black)
+        AppIconBadgeView(app.iconDrawable, size = 55.dp, glowing = false, accent = theme.Accent)
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                app.name,
+                color = theme.TextPrimary,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.ExtraBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                letterSpacing = (-0.5).sp
+            )
+            Text(
+                app.packageName,
+                color = theme.TextSecondary,
+                fontSize = 11.sp,
+                maxLines = 1,
+                fontWeight = FontWeight.Medium,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (app.isSystemApp) {
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Box(Modifier.size(6.dp).clip(CircleShape).background(theme.AccentAmber))
+                    Text("System Component", color = theme.AccentAmber, fontSize = 10.sp, fontWeight = FontWeight.Black)
+                }
             }
         }
     }
 }
- 
+
 @Composable
 fun PillBanner(label: String, color: Color, textColor: Color) {
     Box(
@@ -250,65 +252,112 @@ fun PillBanner(label: String, color: Color, textColor: Color) {
             .clip(CircleShape)
             .background(color.copy(alpha = 0.12f))
             .border(1.2.dp, color.copy(alpha = 0.25f), CircleShape)
-            .padding(vertical = 16.dp),
+            .padding(vertical = 9.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(
             label,
             color = color,
-            fontSize = 16.sp,
+            fontSize = 13.sp,
             fontWeight = FontWeight.Black,
             textAlign = TextAlign.Center
         )
     }
 }
- 
+
 @Composable
 fun TransitionGrid(app: AppInfoData, theme: HyperThemeContext) {
-    Column(verticalArrangement = Arrangement.spacedBy(20.dp), horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-        // Version Transition
-        if (app.currentVersion != null && app.currentVersion != app.version) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("Version Info", color = theme.TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(10.dp))
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    MetaChip(theme, app.currentVersion, isAccent = false)
-                    Text("→", color = theme.Accent, fontSize = 22.sp, fontWeight = FontWeight.Black)
-                    MetaChip(theme, app.version, isAccent = true)
-                }
+    val targetVer = apiToAndroidVersion(app.targetSdk)
+
+    if (app.currentVersion != null && app.currentVersion != app.version) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            CompactTransitionRow(
+                label = "Version",
+                from = app.currentVersion,
+                to = app.version,
+                theme = theme
+            )
+            if (app.currentTargetSdk != null && app.currentTargetSdk != app.targetSdk) {
+                CompactTransitionRow(
+                    label = "API target",
+                    from = "API ${app.currentTargetSdk}",
+                    to = "API ${app.targetSdk}",
+                    theme = theme
+                )
+            } else {
+                CompactInfoChipRow(
+                    chips = listOf(
+                        "Version" to app.version,
+                        "Size" to "${app.sizeMb} MB",
+                        "SDK" to "API ${app.targetSdk}"
+                    ),
+                    theme = theme
+                )
             }
-        } else {
-            SingleInfoRow("Version Build", app.version, theme)
         }
-        
-        val targetVer = apiToAndroidVersion(app.targetSdk)
-        if (app.currentTargetSdk != null && app.currentTargetSdk != app.targetSdk) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("System Update", color = theme.TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(10.dp))
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    MetaChip(theme, "API ${app.currentTargetSdk}", isAccent = false)
-                    Text("→", color = theme.Accent, fontSize = 22.sp, fontWeight = FontWeight.Black)
-                    MetaChip(theme, "API ${app.targetSdk}", isAccent = true)
+    } else {
+        CompactInfoChipRow(
+            chips = listOf(
+                "Version" to app.version,
+                "Size" to "${app.sizeMb} MB",
+                "SDK" to "API ${app.targetSdk}"
+            ),
+            theme = theme
+        )
+    }
+}
+
+@Composable
+fun CompactInfoChipRow(chips: List<Pair<String, String>>, theme: HyperThemeContext) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        chips.forEach { (label, value) ->
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(theme.BgGlass)
+                    .border(1.dp, theme.BgGlassBorder, RoundedCornerShape(12.dp))
+                    .padding(vertical = 8.dp, horizontal = 6.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(label, color = theme.TextTertiary, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                    Spacer(Modifier.height(2.dp))
+                    Text(value, color = theme.TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Black)
                 }
-                Spacer(Modifier.height(6.dp))
-                Text("Android $targetVer Target", color = theme.Accent.copy(alpha = 0.6f), fontSize = 11.sp, fontWeight = FontWeight.Black)
             }
-        } else {
-            SingleInfoRow("Compatibility", "Android $targetVer (API ${app.targetSdk})", theme)
         }
     }
 }
- 
+
+@Composable
+fun CompactTransitionRow(label: String, from: String, to: String, theme: HyperThemeContext) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(label, color = theme.TextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(4.dp))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            MetaChip(theme, from, isAccent = false)
+            Text("→", color = theme.Accent, fontSize = 16.sp, fontWeight = FontWeight.Black)
+            MetaChip(theme, to, isAccent = true)
+        }
+    }
+}
+
 @Composable
 fun SingleInfoRow(label: String, value: String, theme: HyperThemeContext) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(label, color = theme.TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(10.dp))
+        Text(label, color = theme.TextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(6.dp))
         MetaChip(theme, value, isAccent = true)
     }
 }
- 
+
 @Composable
 fun AppIconBadgeView(icon: android.graphics.drawable.Drawable?, size: Dp = 72.dp, glowing: Boolean = false, accent: Color) {
     val isDark = isSystemInDarkTheme()
@@ -333,15 +382,15 @@ fun AppIconBadgeView(icon: android.graphics.drawable.Drawable?, size: Dp = 72.dp
         }
         Box(
             Modifier.size(size)
-                .clip(RoundedCornerShape(size * 0.3f))
+                .clip(RoundedCornerShape(size * 0.28f))
                 .background(if (isDark) Color.White.copy(alpha = 0.05f) else Color.Black.copy(alpha = 0.03f))
-                .border(1.5.dp, if (isDark) Color.White.copy(alpha = 0.15f) else Color.Black.copy(alpha = 0.08f), RoundedCornerShape(size * 0.3f)),
+                .border(1.5.dp, if (isDark) Color.White.copy(alpha = 0.15f) else Color.Black.copy(alpha = 0.08f), RoundedCornerShape(size * 0.28f)),
             contentAlignment = Alignment.Center
         ) {
             if (icon != null) {
                 androidx.compose.ui.viewinterop.AndroidView(factory = { ctx ->
                     android.widget.ImageView(ctx).apply { setImageDrawable(icon); scaleType = android.widget.ImageView.ScaleType.FIT_CENTER }
-                }, modifier = Modifier.fillMaxSize().padding(size * 0.15f))
+                }, modifier = Modifier.fillMaxSize().padding(size * 0.14f))
             } else {
                 Box(Modifier.fillMaxSize().background(accent.copy(alpha = 0.2f)), contentAlignment = Alignment.Center) {
                     Text("A", color = accent, fontSize = (size.value * 0.4).sp, fontWeight = FontWeight.Black)
@@ -350,19 +399,19 @@ fun AppIconBadgeView(icon: android.graphics.drawable.Drawable?, size: Dp = 72.dp
         }
     }
 }
- 
+
 @Composable
 fun ConfirmSheet(theme: HyperThemeContext, app: AppInfoData, phase: InstallerPhase, onInstall: () -> Unit, onDismiss: () -> Unit) {
     val scale = remember { Animatable(0.92f) }
     LaunchedEffect(Unit) { scale.animateTo(1f, spring(dampingRatio = 0.62f, stiffness = 280f)) }
-    
+
     GlassCard(theme) {
-        Box(Modifier.align(Alignment.CenterHorizontally).size(52.dp, 5.dp).clip(CircleShape).background(theme.TextTertiary.copy(alpha = 0.35f)))
-        Spacer(Modifier.height(36.dp))
-        
+        Box(Modifier.align(Alignment.CenterHorizontally).size(36.dp, 4.dp).clip(CircleShape).background(theme.TextTertiary.copy(alpha = 0.35f)))
+        Spacer(Modifier.height(14.dp))
+
         InnerTuneHeader(app, theme, scale.value)
-        Spacer(Modifier.height(36.dp))
-        
+        Spacer(Modifier.height(12.dp))
+
         val bannerLabel = when (phase) {
             InstallerPhase.UPDATE_CONFIRM -> "Update this application?"
             InstallerPhase.REINSTALL_CONFIRM -> "Reinstall this application?"
@@ -370,114 +419,117 @@ fun ConfirmSheet(theme: HyperThemeContext, app: AppInfoData, phase: InstallerPha
             else -> "Install this application?"
         }
         PillBanner(bannerLabel, theme.Accent, theme.TextPrimary)
-        Spacer(Modifier.height(32.dp))
-        
+        Spacer(Modifier.height(12.dp))
+
         TransitionGrid(app, theme)
-        Spacer(Modifier.height(44.dp))
-        
+        Spacer(Modifier.height(18.dp))
+
         val actionLabel = when (phase) {
             InstallerPhase.UPDATE_CONFIRM -> "Update App"
             InstallerPhase.DOWNGRADE_CONFIRM -> "Install Anyway"
             else -> "Install"
         }
         HyperButton(actionLabel, theme.Accent, onClick = onInstall)
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(8.dp))
         HyperButton("Cancel", theme.BgGlass, theme.TextPrimary, onClick = onDismiss)
     }
 }
- 
+
 @Composable
 fun ProgressSheet(theme: HyperThemeContext, app: AppInfoData, progress: Float, isUninstall: Boolean) {
     GlassCard(theme) {
-        Box(Modifier.align(Alignment.CenterHorizontally).size(52.dp, 5.dp).clip(CircleShape).background(theme.TextTertiary.copy(alpha = 0.35f)))
-        Spacer(Modifier.height(64.dp))
+        Box(Modifier.align(Alignment.CenterHorizontally).size(36.dp, 4.dp).clip(CircleShape).background(theme.TextTertiary.copy(alpha = 0.35f)))
+        Spacer(Modifier.height(28.dp))
         Box(Modifier.align(Alignment.CenterHorizontally)) {
             RingProgress(progress, theme.Accent)
             Box(Modifier.matchParentSize(), contentAlignment = Alignment.Center) {
-                AppIconBadgeView(app.iconDrawable, 84.dp, glowing = true, accent = theme.Accent)
+                AppIconBadgeView(app.iconDrawable, 60.dp, glowing = true, accent = theme.Accent)
             }
         }
-        Spacer(Modifier.height(48.dp))
+        Spacer(Modifier.height(20.dp))
         Text(
             if (isUninstall) "Uninstalling…" else "Installing…",
             Modifier.align(Alignment.CenterHorizontally),
-            color = theme.TextPrimary, fontSize = 26.sp, fontWeight = FontWeight.Black
+            color = theme.TextPrimary, fontSize = 20.sp, fontWeight = FontWeight.Black
         )
-        Text(app.name, Modifier.align(Alignment.CenterHorizontally), color = theme.TextSecondary, fontSize = 16.sp, fontWeight = FontWeight.Medium)
-        Spacer(Modifier.height(64.dp))
+        Text(app.name, Modifier.align(Alignment.CenterHorizontally), color = theme.TextSecondary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+        Spacer(Modifier.height(28.dp))
     }
 }
- 
+
 @Composable
 fun InstallSuccessSheet(theme: HyperThemeContext, app: AppInfoData, onOpen: () -> Unit, onDone: () -> Unit) {
     val scale = remember { Animatable(0f) }
     LaunchedEffect(Unit) { scale.animateTo(1f, spring(dampingRatio = 0.5f, stiffness = 250f)) }
     GlassCard(theme) {
-        Box(Modifier.align(Alignment.CenterHorizontally).size(52.dp, 5.dp).clip(CircleShape).background(theme.TextTertiary.copy(alpha = 0.35f)))
-        Spacer(Modifier.height(56.dp))
+        Box(Modifier.align(Alignment.CenterHorizontally).size(36.dp, 4.dp).clip(CircleShape).background(theme.TextTertiary.copy(alpha = 0.35f)))
+        Spacer(Modifier.height(24.dp))
         Box(Modifier.align(Alignment.CenterHorizontally).scale(scale.value)) {
-            Canvas(Modifier.size(110.dp)) {
+            Canvas(Modifier.size(80.dp)) {
                 drawCircle(theme.Accent.copy(alpha = 0.18f))
             }
-            Box(Modifier.size(88.dp).align(Alignment.Center).clip(CircleShape).background(theme.Accent.copy(alpha = 0.3f)), contentAlignment = Alignment.Center) {
-                Text("\u2713", color = theme.Accent, fontSize = 48.sp, fontWeight = FontWeight.Black)
+            Box(Modifier.size(64.dp).align(Alignment.Center).clip(CircleShape).background(theme.Accent.copy(alpha = 0.3f)), contentAlignment = Alignment.Center) {
+                Text("\u2713", color = theme.Accent, fontSize = 32.sp, fontWeight = FontWeight.Black)
             }
         }
-        Spacer(Modifier.height(32.dp))
-        Text("Finished Successfully!", Modifier.align(Alignment.CenterHorizontally), color = theme.TextPrimary, fontSize = 28.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
-        Text(app.name, Modifier.align(Alignment.CenterHorizontally), color = theme.TextSecondary, fontSize = 16.sp, fontWeight = FontWeight.Medium)
-        Spacer(Modifier.height(48.dp))
-        HyperButton("Open Application", theme.Accent, onClick = onOpen)
+        Spacer(Modifier.height(14.dp))
+        Text("Finished Successfully!", Modifier.align(Alignment.CenterHorizontally), color = theme.TextPrimary, fontSize = 20.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
+        Text(app.name, Modifier.align(Alignment.CenterHorizontally), color = theme.TextSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
         Spacer(Modifier.height(16.dp))
+        HyperButton("Open Application", theme.Accent, onClick = onOpen)
+        Spacer(Modifier.height(8.dp))
         HyperButton("Done", theme.BgGlass, theme.TextPrimary, onClick = onDone)
     }
 }
- 
+
 @Composable
 fun InstallFailedSheet(theme: HyperThemeContext, app: AppInfoData, onRetry: () -> Unit, onDismiss: () -> Unit) {
     GlassCard(theme) {
-        Box(Modifier.align(Alignment.CenterHorizontally).size(52.dp, 5.dp).clip(CircleShape).background(theme.TextTertiary.copy(alpha = 0.35f)))
-        Spacer(Modifier.height(56.dp))
-        Box(Modifier.align(Alignment.CenterHorizontally).size(88.dp).clip(CircleShape).background(theme.AccentRed.copy(alpha = 0.22f)), contentAlignment = Alignment.Center) {
-            Text("\u2715", color = theme.AccentRed, fontSize = 48.sp, fontWeight = FontWeight.Black)
+        Box(Modifier.align(Alignment.CenterHorizontally).size(36.dp, 4.dp).clip(CircleShape).background(theme.TextTertiary.copy(alpha = 0.35f)))
+        Spacer(Modifier.height(24.dp))
+        Box(Modifier.align(Alignment.CenterHorizontally).size(64.dp).clip(CircleShape).background(theme.AccentRed.copy(alpha = 0.22f)), contentAlignment = Alignment.Center) {
+            Text("\u2715", color = theme.AccentRed, fontSize = 32.sp, fontWeight = FontWeight.Black)
         }
-        Spacer(Modifier.height(32.dp))
-        Text("Installation Failed", Modifier.align(Alignment.CenterHorizontally), color = theme.TextPrimary, fontSize = 26.sp, fontWeight = FontWeight.Black)
-        Spacer(Modifier.height(48.dp))
-        HyperButton("Try Again", theme.Accent, onClick = onRetry)
+        Spacer(Modifier.height(14.dp))
+        Text("Installation Failed", Modifier.align(Alignment.CenterHorizontally), color = theme.TextPrimary, fontSize = 20.sp, fontWeight = FontWeight.Black)
         Spacer(Modifier.height(16.dp))
+        HyperButton("Try Again", theme.Accent, onClick = onRetry)
+        Spacer(Modifier.height(8.dp))
         HyperButton("Cancel", theme.BgGlass, theme.TextPrimary, onClick = onDismiss)
     }
 }
- 
+
 @Composable
 fun UninstallConfirmSheet(theme: HyperThemeContext, app: AppInfoData, onConfirm: () -> Unit, onDismiss: () -> Unit) {
     val scale = remember { Animatable(0.92f) }
     LaunchedEffect(Unit) { scale.animateTo(1f, spring(dampingRatio = 0.65f, stiffness = 300f)) }
-    
+
     GlassCard(theme) {
-        Box(Modifier.align(Alignment.CenterHorizontally).size(52.dp, 5.dp).clip(CircleShape).background(theme.TextTertiary.copy(alpha = 0.35f)))
-        Spacer(Modifier.height(36.dp))
+        Box(Modifier.align(Alignment.CenterHorizontally).size(36.dp, 4.dp).clip(CircleShape).background(theme.TextTertiary.copy(alpha = 0.35f)))
+        Spacer(Modifier.height(14.dp))
         InnerTuneHeader(app, theme, scale.value)
-        Spacer(Modifier.height(36.dp))
-        
+        Spacer(Modifier.height(10.dp))
+
         PillBanner("Uninstall this application?", theme.AccentRed, theme.TextPrimary)
-        Spacer(Modifier.height(28.dp))
+        Spacer(Modifier.height(10.dp))
         Text(
             "This will permanently remove the application and its data from this device.",
-            color = theme.TextSecondary, fontSize = 15.sp, textAlign = TextAlign.Center,
-            lineHeight = 22.sp, modifier = Modifier.padding(horizontal = 16.dp),
+            color = theme.TextSecondary,
+            fontSize = 13.sp,
+            textAlign = TextAlign.Center,
+            lineHeight = 19.sp,
+            modifier = Modifier.padding(horizontal = 8.dp),
             fontWeight = FontWeight.Medium
         )
-        Spacer(Modifier.height(44.dp))
-        
+        Spacer(Modifier.height(16.dp))
+
         val actionLabel = if (app.isSystemApp) "Uninstall Updates" else "Uninstall"
         HyperButton(actionLabel, theme.AccentRed, onClick = onConfirm)
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(8.dp))
         HyperButton("Keep Application", theme.BgGlass, theme.TextPrimary, onClick = onDismiss)
     }
 }
- 
+
 @Composable
 fun UninstallSuccessSheet(theme: HyperThemeContext, app: AppInfoData, onDone: () -> Unit) {
     val scale = remember { Animatable(0f) }
@@ -487,40 +539,40 @@ fun UninstallSuccessSheet(theme: HyperThemeContext, app: AppInfoData, onDone: ()
         onDone()
     }
     GlassCard(theme) {
-        Box(Modifier.align(Alignment.CenterHorizontally).size(52.dp, 5.dp).clip(CircleShape).background(theme.TextTertiary.copy(alpha = 0.35f)))
-        Spacer(Modifier.height(64.dp))
+        Box(Modifier.align(Alignment.CenterHorizontally).size(36.dp, 4.dp).clip(CircleShape).background(theme.TextTertiary.copy(alpha = 0.35f)))
+        Spacer(Modifier.height(28.dp))
         Box(Modifier.align(Alignment.CenterHorizontally).scale(scale.value)) {
-            Canvas(Modifier.size(110.dp)) {
+            Canvas(Modifier.size(80.dp)) {
                 drawCircle(theme.Accent.copy(alpha = 0.18f))
             }
-            Box(Modifier.size(88.dp).align(Alignment.Center).clip(CircleShape).background(theme.Accent.copy(alpha = 0.3f)), contentAlignment = Alignment.Center) {
-                Text("\u2713", color = theme.Accent, fontSize = 48.sp, fontWeight = FontWeight.Black)
+            Box(Modifier.size(64.dp).align(Alignment.Center).clip(CircleShape).background(theme.Accent.copy(alpha = 0.3f)), contentAlignment = Alignment.Center) {
+                Text("\u2713", color = theme.Accent, fontSize = 32.sp, fontWeight = FontWeight.Black)
             }
         }
-        Spacer(Modifier.height(36.dp))
-        Text("Uninstalled!", Modifier.align(Alignment.CenterHorizontally), color = theme.TextPrimary, fontSize = 30.sp, fontWeight = FontWeight.Black)
-        Text("${app.name} removed.", Modifier.align(Alignment.CenterHorizontally), color = theme.TextSecondary, fontSize = 16.sp, fontWeight = FontWeight.Medium)
-        Spacer(Modifier.height(64.dp))
+        Spacer(Modifier.height(14.dp))
+        Text("Uninstalled!", Modifier.align(Alignment.CenterHorizontally), color = theme.TextPrimary, fontSize = 22.sp, fontWeight = FontWeight.Black)
+        Text("${app.name} removed.", Modifier.align(Alignment.CenterHorizontally), color = theme.TextSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+        Spacer(Modifier.height(28.dp))
     }
 }
- 
+
 @Composable
 fun UninstallFailedSheet(theme: HyperThemeContext, app: AppInfoData, onRetry: () -> Unit, onDismiss: () -> Unit) {
     GlassCard(theme) {
-        Box(Modifier.align(Alignment.CenterHorizontally).size(52.dp, 5.dp).clip(CircleShape).background(theme.TextTertiary.copy(alpha = 0.35f)))
-        Spacer(Modifier.height(56.dp))
-        Box(Modifier.align(Alignment.CenterHorizontally).size(88.dp).clip(CircleShape).background(theme.AccentRed.copy(alpha = 0.22f)), contentAlignment = Alignment.Center) {
-            Text("\u2715", color = theme.AccentRed, fontSize = 48.sp, fontWeight = FontWeight.Black)
+        Box(Modifier.align(Alignment.CenterHorizontally).size(36.dp, 4.dp).clip(CircleShape).background(theme.TextTertiary.copy(alpha = 0.35f)))
+        Spacer(Modifier.height(24.dp))
+        Box(Modifier.align(Alignment.CenterHorizontally).size(64.dp).clip(CircleShape).background(theme.AccentRed.copy(alpha = 0.22f)), contentAlignment = Alignment.Center) {
+            Text("\u2715", color = theme.AccentRed, fontSize = 32.sp, fontWeight = FontWeight.Black)
         }
-        Spacer(Modifier.height(36.dp))
-        Text("Removal Failed", Modifier.align(Alignment.CenterHorizontally), color = theme.TextPrimary, fontSize = 28.sp, fontWeight = FontWeight.Black)
-        Spacer(Modifier.height(48.dp))
-        HyperButton("Try Again", theme.AccentRed, onClick = onRetry)
+        Spacer(Modifier.height(14.dp))
+        Text("Removal Failed", Modifier.align(Alignment.CenterHorizontally), color = theme.TextPrimary, fontSize = 20.sp, fontWeight = FontWeight.Black)
         Spacer(Modifier.height(16.dp))
+        HyperButton("Try Again", theme.AccentRed, onClick = onRetry)
+        Spacer(Modifier.height(8.dp))
         HyperButton("Cancel", theme.BgGlass, theme.TextPrimary, onClick = onDismiss)
     }
 }
- 
+
 @Composable
 fun MetaChip(theme: HyperThemeContext, label: String, isAccent: Boolean = false) {
     Box(
@@ -528,23 +580,23 @@ fun MetaChip(theme: HyperThemeContext, label: String, isAccent: Boolean = false)
             .clip(CircleShape)
             .background(if (isAccent) theme.Accent.copy(alpha = 0.18f) else theme.BgGlass)
             .border(1.2.dp, if (isAccent) theme.Accent.copy(alpha = 0.35f) else theme.BgGlassBorder, CircleShape)
-            .padding(horizontal = 20.dp, vertical = 8.dp)
+            .padding(horizontal = 12.dp, vertical = 6.dp)
     ) {
-        Text(label, color = if (isAccent) theme.Accent else theme.TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Black)
+        Text(label, color = if (isAccent) theme.Accent else theme.TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Black)
     }
 }
- 
+
 @Composable
 fun RingProgress(progress: Float, color: Color) {
     val t = rememberInfiniteTransition(label = "ring")
     val angle by t.animateFloat(0f, 360f, infiniteRepeatable(tween(2400, easing = LinearEasing), RepeatMode.Restart), "angle")
-    
+
     Box(contentAlignment = Alignment.Center) {
-        Canvas(Modifier.size(170.dp)) {
+        Canvas(Modifier.size(120.dp)) {
             drawCircle(Brush.radialGradient(listOf(color.copy(alpha = 0.12f), Color.Transparent)), radius = size.width / 2)
         }
-        Canvas(Modifier.size(132.dp).rotate(if (progress <= 0f) angle else 0f)) {
-            val stroke = 12.dp.toPx()
+        Canvas(Modifier.size(96.dp).rotate(if (progress <= 0f) angle else 0f)) {
+            val stroke = 10.dp.toPx()
             drawCircle(color.copy(alpha = 0.15f), center = center, radius = size.width/2 - stroke/2, style = Stroke(stroke))
             drawArc(
                 brush = Brush.sweepGradient(listOf(color.copy(alpha = 0.3f), color, color)),
@@ -556,22 +608,22 @@ fun RingProgress(progress: Float, color: Color) {
         }
     }
 }
- 
+
 @Composable
 fun HyperButton(label: String, color: Color, labelColor: Color = Color.White, onClick: () -> Unit) {
     val src = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     val pressed by src.collectIsPressedAsState()
     val scale by animateFloatAsState(if (pressed) 0.94f else 1f, label = "bs")
     val isDark = isSystemInDarkTheme()
-    
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .graphicsLayer { scaleX = scale; scaleY = scale }
-            .clip(RoundedCornerShape(24.dp))
+            .clip(RoundedCornerShape(16.dp))
             .background(color)
             .clickable(src, null, onClick = onClick)
-            .padding(vertical = 20.dp),
+            .padding(vertical = 13.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(
@@ -579,9 +631,9 @@ fun HyperButton(label: String, color: Color, labelColor: Color = Color.White, on
             color = if (color.alpha < 1f) {
                 if (isDark) Color.White else Color.Black
             } else labelColor,
-            fontSize = 18.sp,
+            fontSize = 15.sp,
             fontWeight = FontWeight.Black,
-            letterSpacing = 0.5.sp
+            letterSpacing = 0.3.sp
         )
     }
 }
