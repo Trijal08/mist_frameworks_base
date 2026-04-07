@@ -17,6 +17,7 @@
 package com.android.systemui.qs.panels.ui.compose
 
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.media.MediaMetadata
 import android.media.session.MediaController
@@ -92,6 +93,7 @@ private data class MediaState(
     val albumArt: Bitmap? = null,
     val isPlaying: Boolean = false,
     val controller: MediaController? = null,
+    val packageName: String? = null,
 )
 
 @Composable
@@ -157,6 +159,7 @@ fun IosMusicPlayer(modifier: Modifier = Modifier) {
                         ?: meta?.getBitmap(MediaMetadata.METADATA_KEY_ART),
                     isPlaying = active.playbackState?.state == PlaybackState.STATE_PLAYING,
                     controller = active,
+                    packageName = active.packageName,
                 )
             }
         }
@@ -181,6 +184,16 @@ fun IosMusicPlayer(modifier: Modifier = Modifier) {
     val hasMedia = mediaState.title != null || mediaState.controller != null
 
     IosMusicPlayerContent(mediaState = mediaState, modifier = modifier)
+}
+
+private fun launchMusicApp(context: Context, packageName: String?) {
+    if (packageName.isNullOrBlank()) return
+    try {
+        val intent = context.packageManager
+            .getLaunchIntentForPackage(packageName) ?: return
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+        context.startActivity(intent)
+    } catch (_: Exception) {}
 }
 
 @Composable
@@ -233,6 +246,9 @@ private fun IosMusicPlayerContent(mediaState: MediaState, modifier: Modifier = M
             .fillMaxSize()
             .clip(RoundedCornerShape(24.dp))
             .background(trackBg)
+            .clickable(enabled = mediaState.packageName != null) {
+                launchMusicApp(context, mediaState.packageName)
+            }
     ) {
         mediaState.albumArt?.let { bmp ->
             Image(
