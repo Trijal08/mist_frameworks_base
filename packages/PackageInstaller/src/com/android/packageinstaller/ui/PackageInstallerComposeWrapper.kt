@@ -17,6 +17,13 @@
 package com.android.packageinstaller.ui
 
 import android.app.Activity
+import android.os.Build
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.ui.platform.ComposeView
 import kotlin.math.round
 import android.util.Log
@@ -58,20 +65,30 @@ object PackageInstallerComposeBridge {
 
         val composeView = ComposeView(activity).apply {
             setContent {
-                PackageInstallerScreen(
-                    appInfo = appInfo,
-                    initialPhase = initialPhase,
-                    onInstallConfirmed = onInstallConfirmed,
-                    onOpenApp = onOpenApp,
-                    onDismiss = onCancel
-                )
+                val isDark = isSystemInDarkTheme()
+                val colorScheme = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    if (isDark) dynamicDarkColorScheme(activity)
+                    else        dynamicLightColorScheme(activity)
+                } else {
+                    if (isDark) darkColorScheme() else lightColorScheme()
+                }
+
+                MaterialTheme(colorScheme = colorScheme) {
+                    PackageInstallerScreen(
+                        appInfo = appInfo,
+                        initialPhase = initialPhase,
+                        onInstallConfirmed = onInstallConfirmed,
+                        onOpenApp = onOpenApp,
+                        onDismiss = onCancel
+                    )
+                }
             }
         }
 
         activity.setContentView(composeView)
 
         activity.window.apply {
-            if (android.os.Build.VERSION.SDK_INT >= 31 && decorView != null) {
+            if (Build.VERSION.SDK_INT >= 31 && decorView != null) {
                 setBackgroundBlurRadius(130)
             }
             setDimAmount(0.05f)

@@ -22,6 +22,8 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.*
@@ -85,7 +87,7 @@ data class HyperThemeContext(
     val Accent: Color,
     val AccentContainer: Color,
     val AccentAmber: Color = Color(0xFFF59E0B),
-    val AccentRed: Color = Color(0xFFEF4444)
+    val AccentRed: Color
 )
 
 @Composable
@@ -102,7 +104,8 @@ fun currentHyperTheme(): HyperThemeContext {
         TextSecondary = colorScheme.onSurfaceVariant.copy(alpha = 0.95f),
         TextTertiary = colorScheme.outline,
         Accent = colorScheme.primary,
-        AccentContainer = colorScheme.primaryContainer
+        AccentContainer = colorScheme.primaryContainer,
+        AccentRed = colorScheme.error
     )
 }
 
@@ -191,15 +194,7 @@ fun GlassCard(theme: HyperThemeContext, content: @Composable ColumnScope.() -> U
             .background(theme.BgCard)
             .border(
                 1.5.dp,
-                Brush.linearGradient(
-                    listOf(
-                        theme.Accent.copy(alpha = if (isDark) 0.45f else 0.7f),
-                        theme.BgGlassBorder.copy(alpha = 0.4f),
-                        Color.Transparent
-                    ),
-                    start = Offset(0f, 0f),
-                    end = Offset(800f, 800f)
-                ),
+                theme.Accent.copy(alpha = if (isDark) 0.55f else 0.75f),
                 RoundedCornerShape(32.dp)
             )
     ) {
@@ -429,9 +424,9 @@ fun ConfirmSheet(theme: HyperThemeContext, app: AppInfoData, phase: InstallerPha
             InstallerPhase.DOWNGRADE_CONFIRM -> "Install Anyway"
             else -> "Install"
         }
-        HyperButton(actionLabel, theme.Accent, onClick = onInstall)
+        HyperButton(actionLabel, HyperButtonStyle.PRIMARY, onClick = onInstall)
         Spacer(Modifier.height(8.dp))
-        HyperButton("Cancel", theme.BgGlass, theme.TextPrimary, onClick = onDismiss)
+        HyperButton("Cancel", HyperButtonStyle.GHOST, onClick = onDismiss)
     }
 }
 
@@ -441,7 +436,7 @@ fun ProgressSheet(theme: HyperThemeContext, app: AppInfoData, progress: Float, i
         Box(Modifier.align(Alignment.CenterHorizontally).size(36.dp, 4.dp).clip(CircleShape).background(theme.TextTertiary.copy(alpha = 0.35f)))
         Spacer(Modifier.height(28.dp))
         Box(Modifier.align(Alignment.CenterHorizontally)) {
-            RingProgress(progress, theme.Accent)
+            RingProgress(progress)
             Box(Modifier.matchParentSize(), contentAlignment = Alignment.Center) {
                 AppIconBadgeView(app.iconDrawable, 60.dp, glowing = true, accent = theme.Accent)
             }
@@ -476,9 +471,9 @@ fun InstallSuccessSheet(theme: HyperThemeContext, app: AppInfoData, onOpen: () -
         Text("Finished Successfully!", Modifier.align(Alignment.CenterHorizontally), color = theme.TextPrimary, fontSize = 20.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
         Text(app.name, Modifier.align(Alignment.CenterHorizontally), color = theme.TextSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
         Spacer(Modifier.height(16.dp))
-        HyperButton("Open Application", theme.Accent, onClick = onOpen)
+        HyperButton("Open Application", HyperButtonStyle.PRIMARY, onClick = onOpen)
         Spacer(Modifier.height(8.dp))
-        HyperButton("Done", theme.BgGlass, theme.TextPrimary, onClick = onDone)
+        HyperButton("Done", HyperButtonStyle.GHOST, onClick = onDone)
     }
 }
 
@@ -493,9 +488,9 @@ fun InstallFailedSheet(theme: HyperThemeContext, app: AppInfoData, onRetry: () -
         Spacer(Modifier.height(14.dp))
         Text("Installation Failed", Modifier.align(Alignment.CenterHorizontally), color = theme.TextPrimary, fontSize = 20.sp, fontWeight = FontWeight.Black)
         Spacer(Modifier.height(16.dp))
-        HyperButton("Try Again", theme.Accent, onClick = onRetry)
+        HyperButton("Try Again", HyperButtonStyle.PRIMARY, onClick = onRetry)
         Spacer(Modifier.height(8.dp))
-        HyperButton("Cancel", theme.BgGlass, theme.TextPrimary, onClick = onDismiss)
+        HyperButton("Cancel", HyperButtonStyle.GHOST, onClick = onDismiss)
     }
 }
 
@@ -524,9 +519,9 @@ fun UninstallConfirmSheet(theme: HyperThemeContext, app: AppInfoData, onConfirm:
         Spacer(Modifier.height(16.dp))
 
         val actionLabel = if (app.isSystemApp) "Uninstall Updates" else "Uninstall"
-        HyperButton(actionLabel, theme.AccentRed, onClick = onConfirm)
+        HyperButton(actionLabel, HyperButtonStyle.ERROR, onClick = onConfirm)
         Spacer(Modifier.height(8.dp))
-        HyperButton("Keep Application", theme.BgGlass, theme.TextPrimary, onClick = onDismiss)
+        HyperButton("Keep Application", HyperButtonStyle.GHOST, onClick = onDismiss)
     }
 }
 
@@ -567,9 +562,9 @@ fun UninstallFailedSheet(theme: HyperThemeContext, app: AppInfoData, onRetry: ()
         Spacer(Modifier.height(14.dp))
         Text("Removal Failed", Modifier.align(Alignment.CenterHorizontally), color = theme.TextPrimary, fontSize = 20.sp, fontWeight = FontWeight.Black)
         Spacer(Modifier.height(16.dp))
-        HyperButton("Try Again", theme.AccentRed, onClick = onRetry)
+        HyperButton("Try Again", HyperButtonStyle.ERROR, onClick = onRetry)
         Spacer(Modifier.height(8.dp))
-        HyperButton("Cancel", theme.BgGlass, theme.TextPrimary, onClick = onDismiss)
+        HyperButton("Cancel", HyperButtonStyle.GHOST, onClick = onDismiss)
     }
 }
 
@@ -587,19 +582,31 @@ fun MetaChip(theme: HyperThemeContext, label: String, isAccent: Boolean = false)
 }
 
 @Composable
-fun RingProgress(progress: Float, color: Color) {
+fun RingProgress(progress: Float) {
+    val cs = MaterialTheme.colorScheme
+    val accentColor  = cs.primary
+    val trackColor   = cs.surfaceVariant
+
     val t = rememberInfiniteTransition(label = "ring")
     val angle by t.animateFloat(0f, 360f, infiniteRepeatable(tween(2400, easing = LinearEasing), RepeatMode.Restart), "angle")
 
     Box(contentAlignment = Alignment.Center) {
         Canvas(Modifier.size(120.dp)) {
-            drawCircle(Brush.radialGradient(listOf(color.copy(alpha = 0.12f), Color.Transparent)), radius = size.width / 2)
+            drawCircle(
+                Brush.radialGradient(listOf(accentColor.copy(alpha = 0.18f), Color.Transparent)),
+                radius = size.width / 2
+            )
         }
         Canvas(Modifier.size(96.dp).rotate(if (progress <= 0f) angle else 0f)) {
             val stroke = 10.dp.toPx()
-            drawCircle(color.copy(alpha = 0.15f), center = center, radius = size.width/2 - stroke/2, style = Stroke(stroke))
+            drawCircle(
+                color = trackColor.copy(alpha = 0.35f),
+                center = center,
+                radius = size.width / 2 - stroke / 2,
+                style = Stroke(stroke)
+            )
             drawArc(
-                brush = Brush.sweepGradient(listOf(color.copy(alpha = 0.3f), color, color)),
+                color = accentColor,
                 startAngle = -90f,
                 sweepAngle = if (progress <= 0f) 170f else 360f * progress,
                 useCenter = false,
@@ -609,28 +616,44 @@ fun RingProgress(progress: Float, color: Color) {
     }
 }
 
+enum class HyperButtonStyle { PRIMARY, ERROR, GHOST }
+
 @Composable
-fun HyperButton(label: String, color: Color, labelColor: Color = Color.White, onClick: () -> Unit) {
+fun HyperButton(
+    label: String,
+    style: HyperButtonStyle = HyperButtonStyle.PRIMARY,
+    onClick: () -> Unit
+) {
+    val cs = MaterialTheme.colorScheme
+
+    val bgColor = when (style) {
+        HyperButtonStyle.PRIMARY -> cs.primary
+        HyperButtonStyle.ERROR   -> cs.error
+        HyperButtonStyle.GHOST   -> cs.surfaceVariant.copy(alpha = 0.55f)
+    }
+    val textColor = when (style) {
+        HyperButtonStyle.PRIMARY -> cs.onPrimary
+        HyperButtonStyle.ERROR   -> cs.onError
+        HyperButtonStyle.GHOST   -> cs.onSurfaceVariant
+    }
+
     val src = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     val pressed by src.collectIsPressedAsState()
     val scale by animateFloatAsState(if (pressed) 0.94f else 1f, label = "bs")
-    val isDark = isSystemInDarkTheme()
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .graphicsLayer { scaleX = scale; scaleY = scale }
             .clip(RoundedCornerShape(16.dp))
-            .background(color)
+            .background(bgColor)
             .clickable(src, null, onClick = onClick)
             .padding(vertical = 13.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(
             label,
-            color = if (color.alpha < 1f) {
-                if (isDark) Color.White else Color.Black
-            } else labelColor,
+            color = textColor,
             fontSize = 15.sp,
             fontWeight = FontWeight.Black,
             letterSpacing = 0.3.sp
