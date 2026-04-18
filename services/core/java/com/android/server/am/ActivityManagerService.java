@@ -108,6 +108,7 @@ import static android.os.Process.PROC_SPACE_TERM;
 import static android.os.Process.ROOT_UID;
 import static android.os.Process.SCHED_FIFO;
 import static android.os.Process.SCHED_RESET_ON_FORK;
+import static android.os.Process.SCHED_RR;
 import static android.os.Process.SHELL_UID;
 import static android.os.Process.SIGNAL_USR1;
 import static android.os.Process.SYSTEM_UID;
@@ -730,6 +731,9 @@ public class ActivityManagerService extends IActivityManager.Stub
     /** Whether some specified important processes are allowed to use FIFO priority. */
     boolean mAllowSpecifiedFifoScheduling = true;
 
+    /** Whether some specified important processes are allowed to use Round Robin priority. */
+    boolean mAllowSpecifiedRoundRobinScheduling = true;
+
     @GuardedBy("mStrictModeCallbacks")
     private final SparseArray<IUnsafeIntentStrictModeCallback>
             mStrictModeCallbacks = new SparseArray<>();
@@ -1062,6 +1066,10 @@ public class ActivityManagerService extends IActivityManager.Stub
     /** The processes that are allowed to use SCHED_FIFO prorioty. */
     @GuardedBy("mProcLock")
     final ArrayList<ProcessRecord> mSpecifiedFifoProcesses = new ArrayList<>();
+
+    /** The processes that are allowed to use SCHED_RR prorioty. */
+    @GuardedBy("mProcLock")
+    final ArrayList<ProcessRecord> mSpecifiedRoundRobinProcesses = new ArrayList<>();
 
     /**
      * List of records for processes that someone had tried to start before the
@@ -1633,10 +1641,6 @@ public class ActivityManagerService extends IActivityManager.Stub
 
     static final HostingRecord sNullHostingRecord =
             new HostingRecord(HostingRecord.HOSTING_TYPE_EMPTY);
-
-    private boolean mThreeFingersSwipeEnabled;
-    private boolean mThreeFingerGestureActive;
-
     /**
      * Used to notify activity lifecycle events.
      */
@@ -2578,7 +2582,7 @@ public class ActivityManagerService extends IActivityManager.Stub
                     Process.THREAD_GROUP_SYSTEM);
             Process.setThreadGroupAndCpuset(
                     mCachedAppOptimizer.mCachedAppOptimizerThread.getThreadId(),
-                    Process.THREAD_GROUP_BACKGROUND);
+                    Process.THREAD_GROUP_SYSTEM);
         } catch (Exception e) {
             Slog.w(TAG, "Setting background thread cpuset failed");
         }
@@ -3458,6 +3462,12 @@ public class ActivityManagerService extends IActivityManager.Stub
             info.putString("shortMsg", "Process crashed.");
             finishInstrumentationLocked(app, Activity.RESULT_CANCELED, info);
         });
+
+        if ("com.android.axion.axpcmode".equals(app.processName)) {
+            if (AxExtServiceFactory.getAxPcModeService().isPcModeEnabled()) {
+                AxExtServiceFactory.getAxPcModeService().onPcModeProcessDied();
+            }
+        }
     }
 
     @GuardedBy(anyOf = {"this", "mProcLock"})
@@ -5405,6 +5415,7 @@ public class ActivityManagerService extends IActivityManager.Stub
             ProcessList.startPsiMonitoringAfterBoot();
 
             mHandler.postDelayed(() -> {
+                SystemProperties.set("persist.sys.axion_boot_completed", "1");
                 AxExtServiceFactory.onLateSystemReady();
             }, 5000);
 
@@ -5415,11 +5426,6 @@ public class ActivityManagerService extends IActivityManager.Stub
                                 String data, Bundle extras, boolean ordered,
                                 boolean sticky, int sendingUser) {
                             mBootCompletedTimestamp = SystemClock.uptimeMillis();
-                            mHandler.postDelayed(() -> {
-                                synchronized (mProcLock) {
-                                    mCachedAppOptimizer.compactAllSystem();
-                                }
-                            }, 300000);
                             // Defer the full Pss collection as the system is really busy now.
                             mHandler.postDelayed(() -> {
                                 synchronized (mProcLock) {
@@ -7609,6 +7615,7 @@ public class ActivityManagerService extends IActivityManager.Stub
                 mCachedAppOptimizer.onWakefulnessChanged(wakefulness);
 
                 updateOomAdjLocked(OOM_ADJ_REASON_UI_VISIBILITY);
+                AxExtServiceFactory.getAxBurstEngine().onWakefulnessChanged(isAwake);
             }
         }
     }
@@ -7819,7 +7826,7 @@ public class ActivityManagerService extends IActivityManager.Stub
 
     @Override
     public void requestSystemServerHeapDump() {
-        if (!Build.IS_ENG) {
+        if (!Build.IS_DEBUGGABLE) {
             Slog.wtf(TAG, "requestSystemServerHeapDump called on a user build");
             return;
         }
@@ -8456,6 +8463,30 @@ public class ActivityManagerService extends IActivityManager.Stub
     }
 
     /**
+     * Schedule the given thread a round-robin scheduling priority.
+     *
+     * @param tid the tid of the thread to adjust the scheduling of.
+     * @param suppressLogs {@code true} if any error logging should be disabled.
+     *
+     * @return {@code true} if this succeeded.
+     */
+    public static boolean scheduleAsRoundRobinPriority(int tid, boolean suppressLogs) {
+        try {
+            Process.setThreadScheduler(tid, Process.SCHED_RR | Process.SCHED_RESET_ON_FORK, 1);
+            return true;
+        } catch (IllegalArgumentException e) {
+            if (!suppressLogs) {
+                Slog.w(TAG, "Failed to set scheduling policy, thread does not exist:\n" + e);
+            }
+        } catch (SecurityException e) {
+            if (!suppressLogs) {
+                Slog.w(TAG, "Failed to set scheduling policy, not allowed:\n" + e);
+            }
+        }
+        return false;
+    }
+
+    /**
      * Switches the priority between SCHED_FIFO and SCHED_OTHER for the main thread and render
      * thread of the given process.
      */
@@ -8467,6 +8498,27 @@ public class ActivityManagerService extends IActivityManager.Stub
             scheduleAsFifoPriority(pid, true /* suppressLogs */);
             if (renderThreadTid != 0) {
                 scheduleAsFifoPriority(renderThreadTid, true /* suppressLogs */);
+            }
+        } else {
+            scheduleAsRegularPriority(pid, true /* suppressLogs */);
+            if (renderThreadTid != 0) {
+                scheduleAsRegularPriority(renderThreadTid, true /* suppressLogs */);
+            }
+        }
+    }
+
+    /**
+     * Switches the priority between SCHED_RR and SCHED_OTHER for the main thread and render
+     * thread of the given process.
+     */
+    @GuardedBy("mProcLock")
+    static void setRoundRobinPriority(@NonNull ProcessRecordInternal app, boolean enable) {
+        final int pid = app.getPid();
+        final int renderThreadTid = app.getRenderThreadTid();
+        if (enable) {
+            scheduleAsRoundRobinPriority(pid, true /* suppressLogs */);
+            if (renderThreadTid != 0) {
+                scheduleAsRoundRobinPriority(renderThreadTid, true /* suppressLogs */);
             }
         } else {
             scheduleAsRegularPriority(pid, true /* suppressLogs */);
@@ -8501,7 +8553,10 @@ public class ActivityManagerService extends IActivityManager.Stub
                 // promote to FIFO now
                 if (proc.getCurrentSchedulingGroup() == ProcessList.SCHED_GROUP_TOP_APP) {
                     if (DEBUG_OOM_ADJ) Slog.d("UI_FIFO", "Promoting " + tid + "out of band");
-                    if (proc.useFifoUiScheduling()) {
+                    if (proc.useRoundRobinUiScheduling()) {
+                        setThreadScheduler(proc.getRenderThreadTid(),
+                                SCHED_RR | SCHED_RESET_ON_FORK, 1);
+                    } else if (proc.useFifoUiScheduling()) {
                         setThreadScheduler(proc.getRenderThreadTid(),
                                 SCHED_FIFO | SCHED_RESET_ON_FORK, 1);
                     } else {
@@ -9444,12 +9499,9 @@ public class ActivityManagerService extends IActivityManager.Stub
         }
 
         boolean recoverable = eventType.equals("native_recoverable_crash");
-        boolean isNativeCrash = eventType.equals("native_crash");
-        int uid = (r != null) ? r.uid : -1;
-        int pid = (r != null) ? r.getPid() : -1;
 
-        EventLogTags.writeAmCrash(isNativeCrash ? pid : Binder.getCallingPid(),
-                UserHandle.getUserId(isNativeCrash ? uid : Binder.getCallingUid()), processName,
+        EventLogTags.writeAmCrash(Binder.getCallingPid(),
+                UserHandle.getUserId(Binder.getCallingUid()), processName,
                 r == null ? -1 : r.info.flags,
                 crashInfo.exceptionClassName,
                 crashInfo.exceptionMessage,
@@ -9460,6 +9512,8 @@ public class ActivityManagerService extends IActivityManager.Stub
         int processClassEnum = processName.equals("system_server") ? ServerProtoEnums.SYSTEM_SERVER
                 : (r != null) ? r.getProcessClassEnum()
                         : ServerProtoEnums.ERROR_SOURCE_UNKNOWN;
+        int uid = (r != null) ? r.uid : -1;
+        int pid = (r != null) ? r.getPid() : -1;
         FrameworkStatsLog.write(FrameworkStatsLog.APP_CRASH_OCCURRED,
                 uid,
                 eventType,
@@ -9624,7 +9678,7 @@ public class ActivityManagerService extends IActivityManager.Stub
 
         // Exit early if the dropbox isn't configured to accept this report type.
         final String dropboxTag = processClass(process) + "_strictmode";
-        if (!isDropBoxTagEnabled(dbox, dropboxTag)) return;
+        if (dbox == null || !dbox.isTagEnabled(dropboxTag)) return;
 
         final StringBuilder sb = new StringBuilder(1024);
         synchronized (sb) {
@@ -9665,28 +9719,8 @@ public class ActivityManagerService extends IActivityManager.Stub
 
         final String res = sb.toString();
         IoThread.getHandler().post(() -> {
-            addTextToDropBox(dbox, dropboxTag, res);
+            dbox.addText(dropboxTag, res);
         });
-    }
-
-    private boolean isDropBoxTagEnabled(DropBoxManager dbox, String dropboxTag) {
-        if (dbox == null) {
-            return false;
-        }
-        try {
-            return dbox.isTagEnabled(dropboxTag);
-        } catch (RuntimeException e) {
-            Slog.w(TAG, "Unable to query DropBox tag " + dropboxTag, e);
-            return false;
-        }
-    }
-
-    private void addTextToDropBox(DropBoxManager dbox, String dropboxTag, String data) {
-        try {
-            dbox.addText(dropboxTag, data);
-        } catch (RuntimeException e) {
-            Slog.w(TAG, "Unable to write DropBox entry " + dropboxTag, e);
-        }
     }
 
     /**
@@ -9959,7 +9993,7 @@ public class ActivityManagerService extends IActivityManager.Stub
 
         // Exit early if the dropbox isn't configured to accept this report type.
         final String dropboxTag = processClass(process) + "_" + eventType;
-        if (!isDropBoxTagEnabled(dbox, dropboxTag)) return;
+        if (dbox == null || !dbox.isTagEnabled(dropboxTag)) return;
 
         // Check if we should rate limit and abort early if needed.
         final DropboxRateLimiter.RateLimitResult rateLimitResult =
@@ -10114,7 +10148,7 @@ public class ActivityManagerService extends IActivityManager.Stub
                     }
                 }
 
-                addTextToDropBox(dbox, dropboxTag, sb.toString());
+                dbox.addText(dropboxTag, sb.toString());
             }
         };
 
@@ -15857,6 +15891,10 @@ public class ActivityManagerService extends IActivityManager.Stub
                 adjustFifoProcessesIfNeeded(uid, !active /* allowFifo */);
             }
         }
+        
+        synchronized (mProcLock) {
+            adjustRoundRobinProcessesIfNeeded(uid, !active /* allowRR */);
+        }
     }
 
     final boolean isCameraActiveForUid(@UserIdInt int uid) {
@@ -15890,6 +15928,31 @@ public class ActivityManagerService extends IActivityManager.Stub
                 continue;
             }
             setFifoPriority(proc, allowSpecifiedFifo /* enable */);
+        }
+    }
+
+    /**
+     * Similar to {@link #adjustFifoProcessesIfNeeded}, but for Round Robin scheduling.
+     */
+    @VisibleForTesting
+    @GuardedBy("mProcLock")
+    void adjustRoundRobinProcessesIfNeeded(int preemptiveUid, boolean allowSpecifiedRR) {
+        if (allowSpecifiedRR == mAllowSpecifiedRoundRobinScheduling) {
+            return;
+        }
+        if (!allowSpecifiedRR) {
+            final UidRecord uidRec = mProcessList.mActiveUids.get(preemptiveUid);
+            if (uidRec == null || uidRec.getCurProcState() > PROCESS_STATE_TOP) {
+                return;
+            }
+        }
+        mAllowSpecifiedRoundRobinScheduling = allowSpecifiedRR;
+        for (int i = mSpecifiedRoundRobinProcesses.size() - 1; i >= 0; i--) {
+            final ProcessRecord proc = mSpecifiedRoundRobinProcesses.get(i);
+            if (proc.getSetSchedGroup() != ProcessList.SCHED_GROUP_TOP_APP) {
+                continue;
+            }
+            setRoundRobinPriority(proc, allowSpecifiedRR /* enable */);
         }
     }
 
@@ -17812,6 +17875,9 @@ public class ActivityManagerService extends IActivityManager.Stub
         public void startProcess(String processName, ApplicationInfo info, boolean knownToBeDead,
                 boolean isTop, String hostingType, ComponentName hostingName) {
             try {
+                if (AxUtils.isCamera(processName)) {
+                    AxExtServiceFactory.getMemoryManager().boostCamera(true);
+                }
                 if (Trace.isTagEnabled(Trace.TRACE_TAG_ACTIVITY_MANAGER)) {
                     Trace.traceBegin(Trace.TRACE_TAG_ACTIVITY_MANAGER, "startProcess:"
                             + processName);
@@ -19780,6 +19846,90 @@ public class ActivityManagerService extends IActivityManager.Stub
         return mFreezer;
     }
 
+    @Override
+    public void adjustCpusetCpus(String group, String cpus, long duration) {
+        AxExtServiceFactory.getAxBurstEngine().adjustCpusetCpus(group, cpus, duration);
+    }
+
+    @Override
+    public void inputBoost() {
+        AxExtServiceFactory.getAxBurstEngine().inputBoost();
+    }
+
+    @Override
+    public void getProcessesAndFrozen(String currentResumePackage) {
+        AxExtServiceFactory.getAxBurstEngine().getProcessesAndFrozen(currentResumePackage);
+    }
+    
+    @Override
+    public void boostThread(int tid) {
+        AxExtServiceFactory.getAxBurstEngine().boostThread(tid);
+    }
+
+    @Override
+    public void launcherItemsLoadingBoost(long duration) {
+        AxExtServiceFactory.getAxBurstEngine().launcherItemsLoadingBoost(duration);
+    }
+    
+    @Override
+    public void systemThreadBoost(int tid, long duration) {
+        if (tid <= 0) return;
+        AxExtServiceFactory.getAxBurstEngine().systemThreadBoost(tid, duration);
+    }
+
+    @Override
+    public void flingBoost(boolean active) {
+        AxExtServiceFactory.getAxBurstEngine().flingBoost(active);
+    }
+
+    @Override
+    public void compositionBoost(long durationMs) {
+        AxExtServiceFactory.getAxBurstEngine().compositionBoost(durationMs);
+    }
+
+    @Override
+    public void gpuBoost(boolean active) {
+        AxExtServiceFactory.getAxBurstEngine().gpuBoost(active);
+    }
+
+    @Override
+    public void shadeBoost(boolean active) {
+        AxExtServiceFactory.getAxBurstEngine().shadeBoost(active);
+    }
+
+    @Override
+    public void releaseMemory(int minAdj, int maxKillCount, boolean includeUIProcesses, boolean skipCamera) {
+        mHandler.post(() -> {
+            AxExtServiceFactory.getMemoryManager().releaseMemory(
+                minAdj, maxKillCount, includeUIProcesses, skipCamera);
+        });
+    }
+
+    @Override
+    public String getSpoofPifConfig() {
+        return AxExtServiceFactory.getSpoofManager().getPifConfig();
+    }
+
+    @Override
+    public String getSpoofGamePropsConfig() {
+        return AxExtServiceFactory.getSpoofManager().getGamePropsConfig();
+    }
+
+    @Override
+    public String getSpoofTrickyStoreTarget() {
+        return AxExtServiceFactory.getSpoofManager().getTrickyStoreTarget();
+    }
+
+    @Override
+    public String getSpoofTrickyStoreKeyBox() {
+        return AxExtServiceFactory.getSpoofManager().getTrickyStoreKeyBox();
+    }
+
+    @Override
+    public String getSpoofTrickyStorePatch() {
+        return AxExtServiceFactory.getSpoofManager().getTrickyStorePatch();
+    }
+
     // Set of IntentCreatorToken objects that are currently active.
     private static final Map<IntentCreatorToken.Key, WeakReference<IntentCreatorToken>>
             sIntentCreatorTokenCache = new ConcurrentHashMap<>();
@@ -20021,98 +20171,5 @@ public class ActivityManagerService extends IActivityManager.Stub
             return;
         }
         r.getWindowProcessController().setOptimizationInfo(compilerFilter, compilationReason);
-    }
-
-    @Override
-    public boolean isThreeFingersSwipeActive() {
-        return mThreeFingersSwipeEnabled && mThreeFingerGestureActive;
-    }
-
-    @Override
-    public void setThreeFingersSwipeActive(boolean active) {
-        mThreeFingersSwipeEnabled = active;
-    }
-
-    @Override
-    public void setThreeGestureStateActive(boolean active) {
-        mThreeFingerGestureActive = active;
-    }
-
-    @Override
-    public boolean shouldForceCutoutFullscreen(String packageName) {
-        return mActivityTaskManager.shouldForceCutoutFullscreen(packageName);
-    }
-
-    @Override
-    public void releaseMemory(int minAdj, int maxKillCount,
-                              boolean includeUIProcesses, boolean skipCamera) {
-        if (minAdj <= 0) return;
-
-        final int currentUser = mUserController.getCurrentUserId();
-        final ArrayList<ProcessRecord> victims = new ArrayList<>();
-
-        synchronized (this) {
-            synchronized (mProcLock) {
-                mProcessList.forEachLruProcessesLOSP(false, proc -> {
-                    if (proc == null || proc.getThread() == null) return;
-
-                    final int setAdj = proc.getSetAdj();
-                    final int state = proc.getSetProcState();
-
-                    // Exclusions
-                    if (proc.isPersistent()) return;
-                    if (proc.userId != currentUser) return;
-                    if (state <= ActivityManager.PROCESS_STATE_IMPORTANT_FOREGROUND) return;
-                    if (state == ActivityManager.PROCESS_STATE_HOME) return;
-                    if (!includeUIProcesses && proc.hasActivities()) return;
-
-                    if (setAdj >= minAdj) victims.add(proc);
-                });
-            }
-        }
-
-        victims.sort((a, b) -> Integer.compare(b.getSetAdj(), a.getSetAdj()));
-
-        int killed = 0;
-        for (ProcessRecord proc : victims) {
-            if (killed >= maxKillCount) break;
-            final String reason = "screen-on memory reclaim";
-            mHandler.post(() -> {
-                synchronized (ActivityManagerService.this) {
-                    proc.killLocked(reason,
-                            ApplicationExitInfo.REASON_OTHER,
-                            ApplicationExitInfo.SUBREASON_MEMORY_PRESSURE, true);
-                }
-            });
-            killed++;
-        }
-    }
-
-    @Override
-    public void compactAllSystem() {
-        mHandler.post(() -> {
-            synchronized (mProcLock) {
-                mCachedAppOptimizer.compactAllSystem();
-            }
-        });
-    }
-
-    public class ProcessComparator implements Comparator<ProcessToKill> {
-        @Override
-        public int compare(ProcessToKill p1, ProcessToKill p2) {
-            return Integer.compare(p2.adj, p1.adj);
-        }
-    }
-
-    public static final class ProcessToKill {
-        public int adj;
-        public String name; 
-        public int pid;
-
-        public ProcessToKill(int pid, int adj, String name) {
-            this.pid = pid;
-            this.adj = adj;
-            this.name = name;
-        }
     }
 }
