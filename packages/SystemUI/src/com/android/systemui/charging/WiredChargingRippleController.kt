@@ -48,7 +48,7 @@ import com.android.systemui.statusbar.commandline.Command
 import com.android.systemui.statusbar.commandline.CommandRegistry
 import com.android.systemui.statusbar.policy.BatteryController
 import com.android.systemui.statusbar.policy.ConfigurationController
-import com.android.internal.util.lunaris.ThemeUtils
+import com.android.internal.util.mist.ThemeUtils
 import com.android.systemui.util.time.SystemClock
 import java.io.PrintWriter
 import javax.inject.Inject
