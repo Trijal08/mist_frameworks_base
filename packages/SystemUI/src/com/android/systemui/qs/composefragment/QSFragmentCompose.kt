@@ -160,9 +160,13 @@ import com.android.systemui.qs.panels.ui.compose.TileGrid
 import com.android.systemui.qs.shared.ui.QuickSettings.Elements
 import com.android.systemui.qs.ui.composable.QuickSettingsShade
 import com.android.systemui.qs.ui.composable.QuickSettingsShade.systemGestureExclusionInShade
+
+import androidx.compose.ui.zIndex
 import com.android.systemui.qs.ui.composable.QuickSettingsTheme
 import com.android.systemui.res.R
 import com.android.systemui.shade.ShadeDisplayAware
+
+import com.android.systemui.qs.panels.ui.viewmodel.TileViewModel
 import com.android.systemui.shade.shared.flag.ShadeWindowGoesAround
 import com.android.systemui.statusbar.policy.ConfigurationController
 import com.android.systemui.statusbar.policy.ConfigurationController.ConfigurationListener
@@ -192,6 +196,7 @@ import lineageos.providers.LineageSettings
 
 val LocalBlurEnabled = staticCompositionLocalOf { false }
 val LocalQsScrolling = compositionLocalOf { false }
+val IosControlPanelElementKey = com.android.compose.animation.scene.ElementKey("IosControlPanel")
 
 @SuppressLint("ValidFragment")
 class QSFragmentCompose
@@ -845,12 +850,28 @@ constructor(
                                 )
                                 .padding(horizontal = qsHorizontalMargin())
                     ) {
-                        QuickQuickSettingsLayout(
-                            brightness = BrightnessSlider,
-                            tiles = Tiles,
-                            media = Media,
-                            mediaInRow = viewModel.qqsMediaInRow,
-                        )
+                        Column {
+                            val containerViewModel = viewModel.containerViewModel
+                            val internetTileVM = containerViewModel.tileGridViewModel.tileViewModels.find { it.spec.spec == "internet" }
+                            val btTileVM = containerViewModel.tileGridViewModel.tileViewModels.find { it.spec.spec == "bt" }
+
+                            Box(modifier = Modifier.padding(top = 10.dp, bottom = 16.dp)) {
+                                Element(IosControlPanelElementKey, modifier = Modifier.fillMaxWidth().zIndex(1f)) {
+                                    IosControlPanel(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        internetTile = internetTileVM,
+                                        btTile = btTileVM
+                                    )
+                                }
+                            }
+
+                            QuickQuickSettingsLayout(
+                                brightness = BrightnessSlider,
+                                tiles = Tiles,
+                                media = Media,
+                                mediaInRow = viewModel.qqsMediaInRow,
+                            )
+                        }
                     }
                 }
             }
@@ -911,14 +932,23 @@ constructor(
                         Spacer(
                             modifier = Modifier.height { qqsPadding + qsExtraPadding.roundToPx() }
                         )
-                        IosControlPanel(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(
-                                    horizontal = qsHorizontalMargin(),
-                                    vertical = 4.dp,
+                        val internetTileVM = containerViewModel.tileGridViewModel.tileViewModels.find { it.spec.spec == "internet" }
+                        val btTileVM = containerViewModel.tileGridViewModel.tileViewModels.find { it.spec.spec == "bt" }
+
+                        Box(
+                            modifier = Modifier.padding(
+                                horizontal = qsHorizontalMargin(),
+                                vertical = 4.dp,
+                            )
+                        ) {
+                            Element(IosControlPanelElementKey, modifier = Modifier.fillMaxWidth().zIndex(1f)) {
+                                IosControlPanel(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    internetTile = internetTileVM,
+                                    btTile = btTileVM
                                 )
-                        )
+                            }
+                        }
                         val BrightnessSlider: @Composable () -> Unit = {
                             Element(Elements.BrightnessSlider, modifier = modifier) {
                                 BrightnessSlider(viewModel, layoutState)

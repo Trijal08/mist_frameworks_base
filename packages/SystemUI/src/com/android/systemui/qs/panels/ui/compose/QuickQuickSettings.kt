@@ -16,14 +16,21 @@
 
 package com.android.systemui.qs.panels.ui.compose
 
+import android.database.ContentObserver
+import android.os.Handler
+import android.os.Looper
+import android.os.UserHandle
 import android.provider.Settings
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.unit.dp
@@ -49,14 +56,47 @@ fun ContentScope.QuickQuickSettings(
     listening: () -> Boolean,
 ) {
     val columns = viewModel.columns
-    val sizedTiles = viewModel.tileViewModels
-    val tiles = sizedTiles.fastMap { it.tile }
     val squishiness by viewModel.squishinessViewModel.squishiness.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
-    
+
     val context = androidx.compose.ui.platform.LocalContext.current
+    val cr = context.contentResolver
+
+    fun readIosPanelEnabled(): Boolean = try {
+        Settings.System.getIntForUser(
+            cr, "qs_ios_control_panel", 0, UserHandle.USER_CURRENT
+        ) == 1
+    } catch (_: Exception) { false }
+
+    var iosPanelEnabled by remember { mutableStateOf(readIosPanelEnabled()) }
+
+    DisposableEffect(Unit) {
+        val handler = Handler(Looper.getMainLooper())
+        val observer = object : ContentObserver(handler) {
+            override fun onChange(selfChange: Boolean) {
+                iosPanelEnabled = readIosPanelEnabled()
+            }
+        }
+        try {
+            cr.registerContentObserver(
+                Settings.System.getUriFor("qs_ios_control_panel"),
+                false, observer, UserHandle.USER_ALL,
+            )
+        } catch (_: Exception) {}
+        onDispose { cr.unregisterContentObserver(observer) }
+    }
+
+    val allSizedTiles = viewModel.tileViewModels
+    val sizedTiles = if (iosPanelEnabled) {
+        allSizedTiles.filter { it.tile.spec.spec !in setOf("internet", "bt") }
+    } else {
+        allSizedTiles
+    }
+
+    val tiles = sizedTiles.fastMap { it.tile }
+
     val useModifiedSpacing = remember {
-        Settings.System.getInt(context.contentResolver, Settings.System.QS_USE_MODIFIED_TILE_SPACING, 0) == 1
+        Settings.System.getInt(cr, Settings.System.QS_USE_MODIFIED_TILE_SPACING, 0) == 1
     }
     val classicStyle = rememberQSPanelStyle()
 
