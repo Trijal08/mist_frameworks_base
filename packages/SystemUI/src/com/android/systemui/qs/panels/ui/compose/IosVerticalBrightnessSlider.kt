@@ -105,6 +105,7 @@ fun IosVerticalBrightnessSlider(modifier: Modifier = Modifier) {
     var brightness by remember { mutableFloatStateOf(readBrightness()) }
     var autoMode   by remember { mutableStateOf(readAutoMode()) }
     var isDragging by remember { mutableStateOf(false) }
+    var showExpandedPopup by remember { mutableStateOf(false) }
 
     val targetFraction = brightnessToFraction(brightness, brightnessMin, brightnessMax)
 
@@ -181,22 +182,11 @@ fun IosVerticalBrightnessSlider(modifier: Modifier = Modifier) {
                     writeBrightness(downBrightness)
 
                     longPressJob = scope.launch {
-                        delay(500)
-                        val newAutoMode = !autoMode
-                        autoMode = newAutoMode
-                        val mode = if (newAutoMode)
-                            Settings.System.SCREEN_BRIGHTNESS_MODE_AUTOMATIC
-                        else
-                            Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL
-                        launch(Dispatchers.IO) {
-                            try {
-                                Settings.System.putIntForUser(
-                                    cr, Settings.System.SCREEN_BRIGHTNESS_MODE,
-                                    mode, UserHandle.USER_CURRENT
-                                )
-                            } catch (_: Exception) {}
+                        delay(400)
+                        if (!isDragging) {
+                            showExpandedPopup = true
+                            view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                         }
-                        view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                     }
 
                     var dragging = false
@@ -251,6 +241,19 @@ fun IosVerticalBrightnessSlider(modifier: Modifier = Modifier) {
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 10.dp)
                 .size(22.dp)
+        )
+    }
+
+    if (showExpandedPopup) {
+        IosBrightnessExpandedPopup(
+            initialBrightness = brightness,
+            brightnessMin = brightnessMin,
+            brightnessMax = brightnessMax,
+            onDismiss = { showExpandedPopup = false },
+            onBrightnessChanged = { 
+                brightness = it
+                writeBrightness(it)
+            }
         )
     }
 }
