@@ -149,7 +149,7 @@ public class DnsTile extends QSTileImpl<BooleanState> {
 
     @Override
     public int getMetricsCategory() {
-        return MetricsEvent.LUNARIS;
+        return MetricsEvent.MIST;
     }
 
     private String getSecondaryLabel(int mode) {
