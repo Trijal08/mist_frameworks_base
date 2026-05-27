@@ -281,7 +281,6 @@ public final class PlayIntegritySpoofService {
             }
             if (mSpoofVendingBuild && !mSpoofVendingSdk) {
                 for (Map.Entry<String, String> entry : mBuildFields.entrySet()) {
-                    if ("SDK_INT".equals(entry.getKey())) continue;
                     spoofField(entry.getKey(), entry.getValue(), "PS");
                 }
             }
