@@ -793,32 +793,12 @@ public class ApplicationPackageManager extends PackageManager {
             if (parceledList == null) {
                 return new FeatureInfo[0];
             }
-            final List<FeatureInfo> list = new ArrayList<>(parceledList.getList());
-
-            // Inject Tensor features when toggle is enabled
-            final boolean forceTensor = SystemProperties.getBoolean(
-                    "persist.sys.pp.tensor", false);
-
-            if (forceTensor && !IS_TENSOR_DEVICE) {
-                for (String feature : FEATURES_TENSOR) {
-                    boolean exists = false;
-
-                    for (FeatureInfo fi : list) {
-                        if (feature.equals(fi.name)) {
-                            exists = true;
-                            break;
-                        }
-                    }
-
-                    if (!exists) {
-                        FeatureInfo fi = new FeatureInfo();
-                        fi.name = feature;
-                        fi.version = 0;
-                        list.add(fi);
-                    }
-                }
+            final List<FeatureInfo> list = parceledList.getList();
+            final FeatureInfo[] res = new FeatureInfo[list.size()];
+            for (int i = 0; i < res.length; i++) {
+                res[i] = list.get(i);
             }
-            return list.toArray(new FeatureInfo[0]);
+            return res;
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
