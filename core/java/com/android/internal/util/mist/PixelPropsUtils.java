@@ -66,10 +66,13 @@ public final class PixelPropsUtils {
     private static final String PACKAGE_GOOGLE = "com.google";
     private static final String PACKAGE_NEXUS_LAUNCHER = "com.google.android.apps.nexuslauncher";
     private static final String PACKAGE_SI = "com.google.android.settings.intelligence";
+    private static final String PACKAGE_VENDING = "com.android.vending";
 
     private static final String PROP_HOOKS = "persist.sys.pihooks_";
     private static final String SPOOF_PP = "persist.sys.pp";
+    private static final String ENABLE_GAME_PROP_OPTIONS = "persist.sys.gameprops.enabled";
     public static final String SPOOF_GMS = "persist.sys.pp.gms";
+    private static final String SPOOF_VENDING = "persist.sys.pp.vending";
 
     private static final String TAG = PixelPropsUtils.class.getSimpleName();
     private static final boolean DEBUG = false;
@@ -146,10 +149,16 @@ public final class PixelPropsUtils {
         "TAGS", "TYPE", "SDK_INT"
     };
 
+    private static final String[] VENDING_SPOOF_KEYS = {
+        "BRAND", "DEVICE", "DEVICE_INITIAL_SDK_INT", "FINGERPRINT", "ID",
+        "MANUFACTURER", "MODEL", "PRODUCT", "RELEASE", "SECURITY_PATCH",
+        "TAGS", "TYPE"
+    };
+
     private static final ComponentName GMS_ADD_ACCOUNT_ACTIVITY = ComponentName.unflattenFromString(
             "com.google.android.gms/.auth.uiflows.minutemaid.MinuteMaidActivity");
 
-    private static volatile boolean sIsGms, sIsExcluded;
+    private static volatile boolean sIsGms, sIsVending, sIsExcluded;
     private static volatile String sProcessName;
 
     static {
@@ -166,8 +175,8 @@ public final class PixelPropsUtils {
         propsToChangeRecentPixel.put("PRODUCT", "mustang");
         propsToChangeRecentPixel.put("HARDWARE", "mustang");
         propsToChangeRecentPixel.put("MODEL", "Pixel 10 Pro XL");
-        propsToChangeRecentPixel.put("ID", "BP4A.251205.006");
-        propsToChangeRecentPixel.put("FINGERPRINT", "google/mustang/mustang:16/BP4A.251205.006/14401865:user/release-keys");
+        propsToChangeRecentPixel.put("ID", "BP4A.260205.001");
+        propsToChangeRecentPixel.put("FINGERPRINT", "google/mustang/mustang:16/BP4A.260205.001/14624707:user/release-keys");
         propsToChangePixelTablet = new HashMap<>();
         propsToChangePixelTablet.put("BRAND", "google");
         propsToChangePixelTablet.put("BOARD", "tangorpro");
@@ -176,8 +185,8 @@ public final class PixelPropsUtils {
         propsToChangePixelTablet.put("PRODUCT", "tangorpro");
         propsToChangePixelTablet.put("HARDWARE", "tangorpro");
         propsToChangePixelTablet.put("MODEL", "Pixel Tablet");
-        propsToChangePixelTablet.put("ID", "BP4A.251205.006");
-        propsToChangePixelTablet.put("FINGERPRINT", "google/tangorpro/tangorpro:16/BP4A.251205.006/14401865:user/release-keys");
+        propsToChangePixelTablet.put("ID", "BP4A.260205.001");
+        propsToChangePixelTablet.put("FINGERPRINT", "google/tangorpro/tangorpro:16/BP4A.260205.001/14624707:user/release-keys");
         propsToChangeMeizu = new HashMap<>();
         propsToChangeMeizu.put("BRAND", "meizu");
         propsToChangeMeizu.put("MANUFACTURER", "Meizu");
@@ -251,24 +260,50 @@ public final class PixelPropsUtils {
         }
     }
 
+    public static void spoofBuildVending() {
+        if (!SystemProperties.getBoolean(SPOOF_VENDING, true))
+            return;
+        for (String key : VENDING_SPOOF_KEYS) {
+            setPropValue(key, SystemProperties.get(PROP_HOOKS + key));
+        }
+    }
+
     public static void setProps(Context context) {
         final String packageName = context.getPackageName();
         final String processName = Application.getProcessName();
         Map<String, Object> propsToChange = new HashMap<>();
         sProcessName = processName;
         sIsGms = packageName.equals(PACKAGE_GMS) && processName.equals(PROCESS_GMS_UNSTABLE);
+        sIsVending = packageName.equals(PACKAGE_VENDING);
         sIsExcluded = isGoogleCameraPackage(packageName);
         String model = SystemProperties.get("ro.product.model");
         boolean isPixelDevice = SystemProperties.get("ro.soc.manufacturer").equalsIgnoreCase("Google");
         boolean isMainlineDevice = isPixelDevice && model.matches("Pixel (8|9|10)[a-zA-Z ]*");
         boolean isPixelGmsEnabled = SystemProperties.getBoolean(SPOOF_GMS, true);
+        boolean isPixelVendingEnabled = SystemProperties.getBoolean(SPOOF_VENDING, true) && isPixelGmsEnabled;
         propsToChangeGeneric.forEach((k, v) -> setPropValue(k, v));
+        setGameProps(packageName);
+               
+        if (android.os.Process.isIsolated()) {
+            if (DEBUG) Log.d(TAG, "Skipping setProps in isolated process");
+            return;
+        }
+
         if (packageName == null || processName == null || packageName.isEmpty()) {
             return;
         }
         if (sIsExcluded) {
             return;
         }
+
+        if (sIsVending) {
+            if (!isPixelVendingEnabled) {
+                return;
+            } else {
+                spoofBuildVending();
+            }
+        }
+
         if (sIsGms) {
             if (shouldTryToCertifyDevice()) {
                 if (!isPixelGmsEnabled) {
@@ -314,6 +349,40 @@ public final class PixelPropsUtils {
         }
     }
 
+    private static Map<String, String> getGameProps(String packageName) {
+        Map<String, String> gamePropsToChange = new HashMap<>();
+        String[] keys = {"BRAND", "DEVICE", "MANUFACTURER", "MODEL", "FINGERPRINT", "PRODUCT"};
+        for (String key : keys) {
+            String systemPropertyKey = "persist.sys.gameprops." + packageName + "." + key;
+            String value = SystemProperties.get(systemPropertyKey);
+            if (value != null && !value.isEmpty()) {
+                gamePropsToChange.put(key, value);
+                if (DEBUG) Log.d(TAG, "Got system property: " + systemPropertyKey + " = " + value);
+            }
+        }
+        return gamePropsToChange;
+    }
+
+    public static void setGameProps(String packageName) {
+        if (!SystemProperties.getBoolean(ENABLE_GAME_PROP_OPTIONS, false)) {
+            return;
+        }
+        if (packageName == null || packageName.isEmpty()) {
+            return;
+        }
+        Map<String, String> gamePropsToChange = getGameProps(packageName);
+        if (!gamePropsToChange.isEmpty()) {
+            if (DEBUG) Log.d(TAG, "Defining props for: " + packageName);
+            for (Map.Entry<String, String> prop : gamePropsToChange.entrySet()) {
+                String key = prop.getKey();
+                String value = prop.getValue();
+                if (DEBUG) Log.d(TAG, "Defining " + key + " prop for: " + packageName);
+                setPropValue(key, value);
+            }
+            return;
+        }
+    }
+
     private static boolean isDeviceTablet(Context context) {
         if (context == null) {
             return false;
@@ -323,7 +392,7 @@ public final class PixelPropsUtils {
         return isTablet;
     }
 
-    public static void setPropValue(String key, Object value) {
+    private static void setPropValue(String key, Object value) {
         try {
             Field field = getBuildClassField(key);
             if (field != null) {
@@ -552,6 +621,19 @@ public final class PixelPropsUtils {
     }
 
     public static void onEngineGetCertificateChain() {
+        if (android.os.Process.isIsolated()) {
+            if (DEBUG) Log.d(TAG, "Skipping onEngineGetCertificateChain in isolated process");
+            return;
+        }
+
+        Context context = ActivityThread.currentApplication() != null
+                ? ActivityThread.currentApplication().getApplicationContext()
+                : null;
+        if (context == null) {
+            dlog("Null received in onEngineGetCertificateChain.");
+            return;
+        }
+
         boolean isPixelGmsEnabled = SystemProperties.getBoolean(SPOOF_GMS, true);
         if (!isPixelGmsEnabled) {
             dlog("onEngineGetCertificateChain disabled by setting");
