@@ -20,17 +20,8 @@ public final class AttestationUtils {
 
     private static byte[] sBootKey;
     private static byte[] sBootHash;
-    private static volatile boolean sTeeBroken = false;
 
     private AttestationUtils() {}
-
-    public static void setTeeBroken(boolean broken) {
-        sTeeBroken = broken;
-    }
-
-    public static boolean isTeeBroken() {
-        return sTeeBroken;
-    }
 
     public static byte[] getBootKey() {
         if (sBootKey == null) {
@@ -42,7 +33,7 @@ public final class AttestationUtils {
     public static byte[] getBootHash() {
         if (sBootHash == null) {
             sBootHash = getBootHashFromProp();
-            if (sBootHash == null && !sTeeBroken) {
+            if (sBootHash == null) {
                 sBootHash = extractBootHashFromTee();
             }
             if (sBootHash == null) {
