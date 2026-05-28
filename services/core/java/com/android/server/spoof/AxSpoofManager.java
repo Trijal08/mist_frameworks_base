@@ -24,12 +24,17 @@ import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.UserHandle;
 import android.provider.Settings;
+import android.text.TextUtils;
 import android.util.Log;
 
 import com.android.server.NtServiceInjector;
 
+import org.json.JSONException;
+import org.json.JSONObject;
+
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class AxSpoofManager implements IAxSpoofManager {
     private static final String TAG = "AxSpoofManager";
@@ -42,13 +47,24 @@ public class AxSpoofManager implements IAxSpoofManager {
             Settings.Secure.SPOOF_TRICKYSTORE_PATCH,
     };
 
+    /**
+     * Mistify booleans that map onto JSON keys inside {@link Settings.Secure#SPOOF_PIF_CONFIG}.
+     * Order is {legacy Settings.Secure key, JSON field in spoof_pif_config}.
+     */
+    private static final String[][] LEGACY_PIF_BRIDGE = {
+            { Settings.Secure.PI_PHOTOS_SPOOF,  "spoofPhotos" },
+            { Settings.Secure.PI_VENDING_SPOOF, "spoofVendingBuild" },
+    };
+
     private final Map<String, String> mCache = new ConcurrentHashMap<>();
     private final HandlerThread mHandlerThread;
     private final Handler mHandler;
+    private final AtomicBoolean mApplyingBridge = new AtomicBoolean(false);
 
     private Context mContext;
     private ContentResolver mResolver;
     private ContentObserver mObserver;
+    private ContentObserver mLegacyObserver;
     private volatile boolean mReady = false;
 
     public AxSpoofManager() {
@@ -85,8 +101,67 @@ public class AxSpoofManager implements IAxSpoofManager {
                     Settings.Secure.getUriFor(key), false, mObserver, UserHandle.USER_ALL);
         }
 
+        mLegacyObserver = new ContentObserver(mHandler) {
+            @Override
+            public void onChange(boolean selfChange, Uri uri) {
+                if (selfChange) return;
+                if (mApplyingBridge.get()) return;
+                applyLegacyPifBridge();
+            }
+        };
+        for (String[] entry : LEGACY_PIF_BRIDGE) {
+            mResolver.registerContentObserver(
+                    Settings.Secure.getUriFor(entry[0]), false, mLegacyObserver,
+                    UserHandle.USER_ALL);
+        }
+        applyLegacyPifBridge();
+
         mReady = true;
         Log.i(TAG, "AxSpoofManager ready");
+    }
+
+    /**
+     * Translate the legacy Mistify boolean toggles into the equivalent JSON keys
+     * inside spoof_pif_config. Mistify writes Settings.Secure booleans; we patch
+     * those into the JSON config that PlayIntegritySpoofService actually reads.
+     * Existing JSON keys not in the bridge map are preserved.
+     */
+    private void applyLegacyPifBridge() {
+        if (mResolver == null) return;
+        mApplyingBridge.set(true);
+        try {
+            final String existing = Settings.Secure.getStringForUser(
+                    mResolver, Settings.Secure.SPOOF_PIF_CONFIG, UserHandle.USER_SYSTEM);
+            final JSONObject json;
+            try {
+                json = TextUtils.isEmpty(existing)
+                        ? new JSONObject() : new JSONObject(existing);
+            } catch (JSONException e) {
+                Log.w(TAG, "spoof_pif_config not parseable, skipping legacy bridge", e);
+                return;
+            }
+
+            boolean changed = false;
+            for (String[] entry : LEGACY_PIF_BRIDGE) {
+                final int v = Settings.Secure.getIntForUser(
+                        mResolver, entry[0], 0, UserHandle.USER_SYSTEM);
+                final String desired = v == 1 ? "true" : "false";
+                if (!desired.equals(json.optString(entry[1], ""))) {
+                    try {
+                        json.put(entry[1], desired);
+                        changed = true;
+                    } catch (JSONException ignored) { }
+                }
+            }
+            if (changed) {
+                Settings.Secure.putStringForUser(
+                        mResolver, Settings.Secure.SPOOF_PIF_CONFIG,
+                        json.toString(), UserHandle.USER_SYSTEM);
+                Log.i(TAG, "Legacy Mistify toggles synced into spoof_pif_config");
+            }
+        } finally {
+            mApplyingBridge.set(false);
+        }
     }
 
     private void refreshKey(String key) {
