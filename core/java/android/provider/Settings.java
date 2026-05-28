@@ -15587,6 +15587,53 @@ public final class Settings {
          * @hide
          */
         public static final String SPOOF_TRICKYSTORE_PATCH = "spoof_trickystore_patch";
+
+        /**
+         * Legacy Mistify spoof toggles. Bridged to {@link #SPOOF_PIF_CONFIG} JSON
+         * by AxSpoofManager so existing Mistify Settings UI keeps working.
+         * @hide
+         */
+        public static final String PI_PP_SPOOF = "pi_pp_spoof";
+
+        /**
+         * @hide
+         */
+        public static final String PI_TENSOR_SPOOF = "pi_tensor_spoof";
+
+        /**
+         * @hide
+         */
+        public static final String PI_VENDING_SPOOF = "pi_vending_spoof";
+
+        /**
+         * @hide
+         */
+        public static final String PI_PHOTOS_SPOOF = "pi_photos_spoof";
+
+        /**
+         * @hide
+         */
+        public static final String PI_SNAPCHAT_SPOOF = "pi_snapchat_spoof";
+
+        /**
+         * @hide
+         */
+        public static final String PER_APPS_DEVICE_SPOOF = "per_apps_device_spoof";
+
+        /**
+         * @hide
+         */
+        public static final String PER_APPS_DEVICE_SPOOF_CACHE = "per_apps_device_spoof_cache";
+
+        /**
+         * @hide
+         */
+        public static final String PER_APPS_DEVICE_SPOOF_ENABLED = "per_apps_device_spoof_enabled";
+
+        /**
+         * @hide
+         */
+        public static final String CUSTOM_SPOOF_PROFILES = "custom_spoof_profiles";
     }
 
     /**
