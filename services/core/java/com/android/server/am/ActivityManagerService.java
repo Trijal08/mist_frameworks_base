@@ -3462,12 +3462,6 @@ public class ActivityManagerService extends IActivityManager.Stub
             info.putString("shortMsg", "Process crashed.");
             finishInstrumentationLocked(app, Activity.RESULT_CANCELED, info);
         });
-
-        if ("com.android.axion.axpcmode".equals(app.processName)) {
-            if (AxExtServiceFactory.getAxPcModeService().isPcModeEnabled()) {
-                AxExtServiceFactory.getAxPcModeService().onPcModeProcessDied();
-            }
-        }
     }
 
     @GuardedBy(anyOf = {"this", "mProcLock"})
@@ -7615,7 +7609,6 @@ public class ActivityManagerService extends IActivityManager.Stub
                 mCachedAppOptimizer.onWakefulnessChanged(wakefulness);
 
                 updateOomAdjLocked(OOM_ADJ_REASON_UI_VISIBILITY);
-                AxExtServiceFactory.getAxBurstEngine().onWakefulnessChanged(isAwake);
             }
         }
     }
@@ -17875,9 +17868,6 @@ public class ActivityManagerService extends IActivityManager.Stub
         public void startProcess(String processName, ApplicationInfo info, boolean knownToBeDead,
                 boolean isTop, String hostingType, ComponentName hostingName) {
             try {
-                if (AxUtils.isCamera(processName)) {
-                    AxExtServiceFactory.getMemoryManager().boostCamera(true);
-                }
                 if (Trace.isTagEnabled(Trace.TRACE_TAG_ACTIVITY_MANAGER)) {
                     Trace.traceBegin(Trace.TRACE_TAG_ACTIVITY_MANAGER, "startProcess:"
                             + processName);
@@ -19847,62 +19837,48 @@ public class ActivityManagerService extends IActivityManager.Stub
     }
 
     @Override
-    public void adjustCpusetCpus(String group, String cpus, long duration) {
-        AxExtServiceFactory.getAxBurstEngine().adjustCpusetCpus(group, cpus, duration);
-    }
+    public void releaseMemory(int minAdj, int maxKillCount,
+                              boolean includeUIProcesses, boolean skipCamera) {
+        if (minAdj <= 0) return;
 
-    @Override
-    public void inputBoost() {
-        AxExtServiceFactory.getAxBurstEngine().inputBoost();
-    }
+        final int currentUser = mUserController.getCurrentUserId();
+        final ArrayList<ProcessRecord> victims = new ArrayList<>();
 
-    @Override
-    public void getProcessesAndFrozen(String currentResumePackage) {
-        AxExtServiceFactory.getAxBurstEngine().getProcessesAndFrozen(currentResumePackage);
-    }
-    
-    @Override
-    public void boostThread(int tid) {
-        AxExtServiceFactory.getAxBurstEngine().boostThread(tid);
-    }
+        synchronized (this) {
+            synchronized (mProcLock) {
+                mProcessList.forEachLruProcessesLOSP(false, proc -> {
+                    if (proc == null || proc.getThread() == null) return;
 
-    @Override
-    public void launcherItemsLoadingBoost(long duration) {
-        AxExtServiceFactory.getAxBurstEngine().launcherItemsLoadingBoost(duration);
-    }
-    
-    @Override
-    public void systemThreadBoost(int tid, long duration) {
-        if (tid <= 0) return;
-        AxExtServiceFactory.getAxBurstEngine().systemThreadBoost(tid, duration);
-    }
+                    final int setAdj = proc.getSetAdj();
+                    final int state = proc.getSetProcState();
 
-    @Override
-    public void flingBoost(boolean active) {
-        AxExtServiceFactory.getAxBurstEngine().flingBoost(active);
-    }
+                    // Exclusions
+                    if (proc.isPersistent()) return;
+                    if (proc.userId != currentUser) return;
+                    if (state <= ActivityManager.PROCESS_STATE_IMPORTANT_FOREGROUND) return;
+                    if (state == ActivityManager.PROCESS_STATE_HOME) return;
+                    if (!includeUIProcesses && proc.hasActivities()) return;
 
-    @Override
-    public void compositionBoost(long durationMs) {
-        AxExtServiceFactory.getAxBurstEngine().compositionBoost(durationMs);
-    }
+                    if (setAdj >= minAdj) victims.add(proc);
+                });
+            }
+        }
 
-    @Override
-    public void gpuBoost(boolean active) {
-        AxExtServiceFactory.getAxBurstEngine().gpuBoost(active);
-    }
+        victims.sort((a, b) -> Integer.compare(b.getSetAdj(), a.getSetAdj()));
 
-    @Override
-    public void shadeBoost(boolean active) {
-        AxExtServiceFactory.getAxBurstEngine().shadeBoost(active);
-    }
-
-    @Override
-    public void releaseMemory(int minAdj, int maxKillCount, boolean includeUIProcesses, boolean skipCamera) {
-        mHandler.post(() -> {
-            AxExtServiceFactory.getMemoryManager().releaseMemory(
-                minAdj, maxKillCount, includeUIProcesses, skipCamera);
-        });
+        int killed = 0;
+        for (ProcessRecord proc : victims) {
+            if (killed >= maxKillCount) break;
+            final String reason = "screen-on memory reclaim";
+            mHandler.post(() -> {
+                synchronized (ActivityManagerService.this) {
+                    proc.killLocked(reason,
+                            ApplicationExitInfo.REASON_OTHER,
+                            ApplicationExitInfo.SUBREASON_MEMORY_PRESSURE, true);
+                }
+            });
+            killed++;
+        }
     }
 
     @Override

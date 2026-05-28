@@ -19,10 +19,10 @@ import android.content.Context;
 
 import com.android.server.am.*;
 import com.android.server.pm.*;
-import com.android.server.spoof.AxSpoofManager;
-import com.android.server.spoof.IAxSpoofManager;
 import com.android.server.wm.AxSandboxService;
 import com.android.server.wm.GameSpaceService;
+import com.android.server.spoof.AxSpoofManager;
+import com.android.server.spoof.IAxSpoofManager;
 import com.android.server.wm.WindowManagerService;
 
 public class AxExtServiceFactory {
@@ -30,10 +30,6 @@ public class AxExtServiceFactory {
 
     private static final Object sLock = new Object();
     
-    private static volatile IAxBurstEngine sAxBurstEngine;
-    private static volatile IAxMemoryManager sAxMemoryManager;
-    private static volatile IUxPerformance sUxPerformance;
-    private static volatile IAxPcModeService sPcModeManager;
     private static volatile IAxSpoofManager sAxSpoofManager;
 
     private AxExtServiceFactory(Context context) {
@@ -70,50 +66,6 @@ public class AxExtServiceFactory {
     public static <T> T getOrCreate(IAxExtServiceFactory.ExtType type) {
         Object instance;
         switch (type) {
-            case AX_BURST_ENGINE:
-                if (sAxBurstEngine == null) {
-                    synchronized (sLock) {
-                        if (sAxBurstEngine == null) {
-                            sAxBurstEngine = new AxBurstEngine();
-                        }
-                    }
-                }
-                instance = sAxBurstEngine;
-                break;
-
-            case AX_MEMORY_MANAGER:
-                if (sAxMemoryManager == null) {
-                    synchronized (sLock) {
-                        if (sAxMemoryManager == null) {
-                            sAxMemoryManager = new AxMemoryManagerImpl();
-                        }
-                    }
-                }
-                instance = sAxMemoryManager;
-                break;
-
-            case UX_PERFORMANCE:
-                if (sUxPerformance == null) {
-                    synchronized (sLock) {
-                        if (sUxPerformance == null) {
-                            sUxPerformance = new UxPerformance();
-                        }
-                    }
-                }
-                instance = sUxPerformance;
-                break;
-
-            case PC_MODE_SERVICE:
-                if (sPcModeManager == null) {
-                    synchronized (sLock) {
-                        if (sPcModeManager == null) {
-                            sPcModeManager = new AxPcModeService();
-                        }
-                    }
-                }
-                instance = sPcModeManager;
-                break;
-
             case AX_SPOOF_MANAGER:
                 if (sAxSpoofManager == null) {
                     synchronized (sLock) {
@@ -133,35 +85,14 @@ public class AxExtServiceFactory {
     }
 
     public static void systemReady() {
-        GameSpaceService.systemReady();
         AxSandboxService.systemReady();
-        getAxPcModeService().systemReady();
-    }
-    
-    public static void onLateSystemReady() {
-        OnlineConfigObserver.systemReady();
-        getAxBurstEngine().systemReady();
-        getMemoryManager().systemReady();
-        getUxPerformance().systemReady();
+        GameSpaceService.systemReady();
         getSpoofManager().systemReady();
     }
     
-    public static IAxBurstEngine getAxBurstEngine() {
-        return getOrCreate(IAxExtServiceFactory.ExtType.AX_BURST_ENGINE);
+    public static void onLateSystemReady() {
     }
     
-    public static IAxMemoryManager getMemoryManager() {
-        return getOrCreate(IAxExtServiceFactory.ExtType.AX_MEMORY_MANAGER);
-    }
-    
-    public static IUxPerformance getUxPerformance() {
-        return getOrCreate(IAxExtServiceFactory.ExtType.UX_PERFORMANCE);
-    }
-
-    public static IAxPcModeService getAxPcModeService() {
-        return getOrCreate(IAxExtServiceFactory.ExtType.PC_MODE_SERVICE);
-    }
-
     public static IAxSpoofManager getSpoofManager() {
         return getOrCreate(IAxExtServiceFactory.ExtType.AX_SPOOF_MANAGER);
     }
