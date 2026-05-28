@@ -852,6 +852,13 @@ public class ApplicationPackageManager extends PackageManager {
             return spoofedResult;
         }
 
+        Boolean tensorSpoof =
+                android.security.pixelprops.PixelPropsSpoofService.getInstance()
+                        .hasTensorFeature(name);
+        if (tensorSpoof != null) {
+            return tensorSpoof;
+        }
+
         Boolean maybeHasSystemFeature = RoSystemFeatures.maybeHasFeature(name, version);
         if (maybeHasSystemFeature != null) {
             return maybeHasSystemFeature;
