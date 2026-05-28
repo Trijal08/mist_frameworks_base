@@ -17,12 +17,21 @@
 package android.security.pixelprops;
 
 import android.app.ActivityThread;
+import android.app.Application;
 import android.content.ContentResolver;
+import android.content.res.Configuration;
+import android.content.res.Resources;
+import android.database.ContentObserver;
+import android.net.Uri;
 import android.os.Build;
+import android.os.Process;
+import android.os.SystemProperties;
 import android.provider.Settings;
 import android.security.gameprops.GamePropsSpoofService;
 import android.text.TextUtils;
 import android.util.Log;
+
+import com.android.internal.util.mist.PixelPropsUtils;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -33,23 +42,19 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 
 /**
- * Non-invasive backend for Mistify's legacy "Pixel props" spoof UI.
- *
- * Reads {@link Settings.Secure} keys written by the Mistify Settings UI
- * (the per-app picker, the Snapchat toggle, the Pixel-props master switch
- * and the Tensor-targets screen) and applies the matching {@link Build}
- * field overrides at process startup.
- *
- * <p>Stays out of the way of the AxionAOSP spoof stack:
+ * Non-invasive backend for Mistify's "Pixel props" spoof UI. Functionally
+ * matches what {@code PixelPropsUtils.setProps()} did on 16.2 HEAD but
+ * runs alongside the AxionAOSP spoof stack instead of replacing it:
  * <ul>
  *   <li>Skips {@code com.android.vending} and {@code com.google.android.gms.unstable}
- *       (owned by {@code PlayIntegritySpoofService}).</li>
- *   <li>Skips {@code com.google.android.apps.photos} (owned by the PIF
- *       photo-spoof path bridged from {@code pi_photos_spoof}).</li>
+ *       (owned by {@link android.security.pif.PlayIntegritySpoofService}).</li>
+ *   <li>Skips {@code com.google.android.apps.photos} (owned by PIF's photo-spoof
+ *       path that {@code AxSpoofManager} bridges from {@code pi_photos_spoof}).</li>
  *   <li>Skips any package that {@link GamePropsSpoofService} has a config for.</li>
  * </ul>
  *
@@ -57,71 +62,54 @@ import java.util.Set;
  */
 public final class PixelPropsSpoofService {
     private static final String TAG = "PixelPropsSpoof";
+    private static final boolean DEBUG = false;
 
-    private static final String PACKAGE_VENDING    = "com.android.vending";
+    private static final String PACKAGE_ARCORE     = "com.google.ar.core";
     private static final String PACKAGE_DROIDGUARD = "com.google.android.gms.unstable";
     private static final String PACKAGE_PHOTOS     = "com.google.android.apps.photos";
+    private static final String PACKAGE_SI         = "com.google.android.settings.intelligence";
     private static final String PACKAGE_SNAPCHAT   = "com.snapchat.android";
+    private static final String PACKAGE_VENDING    = "com.android.vending";
 
     private static final String TENSOR_TARGETS_KEY = "tensor_targets";
 
-    /** Apps spoofed to the latest Pixel when the master toggle is on. */
-    private static final Set<String> CURATED_RECENT_PIXEL_PACKAGES = Collections.unmodifiableSet(
-            new HashSet<>(Arrays.asList(
-                    "com.amazon.avod.thirdpartyclient",
-                    "com.android.chrome",
-                    "com.breel.wallpapers20",
-                    "com.disney.disneyplus",
-                    "com.google.android.aicore",
-                    "com.google.android.apps.accessibility.magnifier",
-                    "com.google.android.apps.aiwallpapers",
-                    "com.google.android.apps.bard",
-                    "com.google.android.apps.customization.pixel",
-                    "com.google.android.apps.emojiwallpaper",
-                    "com.google.android.apps.pixel.agent",
-                    "com.google.android.apps.pixel.creativeassistant",
-                    "com.google.android.apps.pixel.nowplaying",
-                    "com.google.android.apps.pixel.psi",
-                    "com.google.android.apps.pixel.subzero",
-                    "com.google.android.apps.pixel.support",
-                    "com.google.android.apps.privacy.wildlife",
-                    "com.google.android.apps.subscriptions.red",
-                    "com.google.android.apps.wallpaper",
-                    "com.google.android.apps.wallpaper.pixel",
-                    "com.google.android.apps.weather",
-                    "com.google.android.googlequicksearchbox",
-                    "com.google.android.pcs",
-                    "com.google.android.wallpaper.effects",
-                    "com.google.pixel.livewallpaper",
-                    "com.microsoft.android.smsorganizer",
-                    "com.nhs.online.nhsonline",
-                    "com.nothing.smartcenter",
-                    "com.realme.link",
-                    "in.startv.hotstar",
-                    "jp.id_credit_sp2.android"
-            )));
+    private static final String sDeviceFingerprint =
+            SystemProperties.get("ro.product.fingerprint", Build.FINGERPRINT);
 
-    /** Pixel XL props used for the Snapchat shortcut. */
+    /** Always-on baseline props applied to every spoofed process. */
+    private static final Map<String, String> GENERIC_PROPS;
+    /** Pixel XL preset (used for Snapchat and historically Photos). */
     private static final Map<String, String> PIXEL_XL_PROPS;
-    /** Recent Pixel props for the curated-list master toggle. */
+    /** Recent Pixel handset preset. */
     private static final Map<String, String> RECENT_PIXEL_PROPS;
-    /** PIXEL_*_EXPERIENCE strings that look like Tensor features. */
+    /** Pixel Tablet preset (when smallestWidth >= 600dp). */
+    private static final Map<String, String> PIXEL_TABLET_PROPS;
+    /** Curated apps that get the recent-Pixel preset under the master toggle. */
+    private static final Set<String> CURATED_RECENT_PIXEL_PACKAGES;
+    /** Google-Camera-clone packages that opt out of all build-field spoofing. */
+    private static final Set<String> CUSTOM_GOOGLE_CAMERA_PACKAGES;
+    /** PIXEL_*_EXPERIENCE strings that look like Tensor-only features. */
     private static final Set<String> TENSOR_FEATURE_NAMES;
 
     static {
-        Map<String, String> xl = new HashMap<>();
+        Map<String, String> generic = new LinkedHashMap<>();
+        generic.put("TYPE", "user");
+        generic.put("TAGS", "release-keys");
+        GENERIC_PROPS = Collections.unmodifiableMap(generic);
+
+        Map<String, String> xl = new LinkedHashMap<>();
         xl.put("BRAND",        "google");
         xl.put("MANUFACTURER", "Google");
         xl.put("DEVICE",       "marlin");
         xl.put("PRODUCT",      "marlin");
         xl.put("HARDWARE",     "marlin");
-        xl.put("MODEL",        "Pixel XL");
         xl.put("ID",           "QP1A.191005.007.A3");
+        xl.put("MODEL",        "Pixel XL");
         xl.put("FINGERPRINT",
                 "google/marlin/marlin:10/QP1A.191005.007.A3/5972272:user/release-keys");
         PIXEL_XL_PROPS = Collections.unmodifiableMap(xl);
 
-        Map<String, String> recent = new HashMap<>();
+        Map<String, String> recent = new LinkedHashMap<>();
         recent.put("BRAND",        "google");
         recent.put("BOARD",        "mustang");
         recent.put("MANUFACTURER", "Google");
@@ -134,7 +122,62 @@ public final class PixelPropsSpoofService {
                 "google/mustang/mustang:16/CP1A.260505.005/15081906:user/release-keys");
         RECENT_PIXEL_PROPS = Collections.unmodifiableMap(recent);
 
-        Set<String> features = new HashSet<>(Arrays.asList(
+        Map<String, String> tablet = new LinkedHashMap<>();
+        tablet.put("BRAND",        "google");
+        tablet.put("BOARD",        "tangorpro");
+        tablet.put("MANUFACTURER", "Google");
+        tablet.put("DEVICE",       "tangorpro");
+        tablet.put("PRODUCT",      "tangorpro");
+        tablet.put("HARDWARE",     "tangorpro");
+        tablet.put("MODEL",        "Pixel Tablet");
+        tablet.put("ID",           "CP1A.260505.005");
+        tablet.put("FINGERPRINT",
+                "google/tangorpro/tangorpro:16/CP1A.260505.005/15081906:user/release-keys");
+        PIXEL_TABLET_PROPS = Collections.unmodifiableMap(tablet);
+
+        CURATED_RECENT_PIXEL_PACKAGES = Collections.unmodifiableSet(
+                new HashSet<>(Arrays.asList(
+                        "com.amazon.avod.thirdpartyclient",
+                        "com.android.chrome",
+                        "com.breel.wallpapers20",
+                        "com.disney.disneyplus",
+                        "com.google.android.aicore",
+                        "com.google.android.apps.accessibility.magnifier",
+                        "com.google.android.apps.aiwallpapers",
+                        "com.google.android.apps.bard",
+                        "com.google.android.apps.customization.pixel",
+                        "com.google.android.apps.emojiwallpaper",
+                        "com.google.android.apps.pixel.agent",
+                        "com.google.android.apps.pixel.creativeassistant",
+                        "com.google.android.apps.pixel.nowplaying",
+                        "com.google.android.apps.pixel.psi",
+                        "com.google.android.apps.pixel.subzero",
+                        "com.google.android.apps.pixel.support",
+                        "com.google.android.apps.privacy.wildlife",
+                        "com.google.android.apps.subscriptions.red",
+                        "com.google.android.apps.wallpaper",
+                        "com.google.android.apps.wallpaper.pixel",
+                        "com.google.android.apps.weather",
+                        "com.google.android.googlequicksearchbox",
+                        "com.google.android.pcs",
+                        "com.google.android.wallpaper.effects",
+                        "com.google.pixel.livewallpaper",
+                        "com.microsoft.android.smsorganizer",
+                        "com.nhs.online.nhsonline",
+                        "com.nothing.smartcenter",
+                        "com.realme.link",
+                        "in.startv.hotstar",
+                        "jp.id_credit_sp2.android"
+                )));
+
+        CUSTOM_GOOGLE_CAMERA_PACKAGES = Collections.unmodifiableSet(
+                new HashSet<>(Arrays.asList(
+                        "com.google.android.MTCL83",
+                        "com.google.android.UltraCVM",
+                        "com.google.android.apps.cameralite"
+                )));
+
+        TENSOR_FEATURE_NAMES = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
                 "com.google.android.feature.PIXEL_2026_EXPERIENCE",
                 "com.google.android.feature.PIXEL_2026_MIDYEAR_EXPERIENCE",
                 "com.google.android.feature.PIXEL_2025_EXPERIENCE",
@@ -146,11 +189,19 @@ public final class PixelPropsSpoofService {
                 "com.google.android.feature.PIXEL_2022_EXPERIENCE",
                 "com.google.android.feature.PIXEL_2022_MIDYEAR_EXPERIENCE",
                 "com.google.android.feature.PIXEL_2021_EXPERIENCE"
-        ));
-        TENSOR_FEATURE_NAMES = Collections.unmodifiableSet(features);
+        )));
     }
 
     private static volatile PixelPropsSpoofService sInstance;
+
+    // ContentObserver-cached settings — avoids per-call Settings.Secure reads
+    // on the hot process-startup path. Refreshed when the user toggles in UI.
+    private volatile boolean mPpSpoofEnabled       = true;
+    private volatile boolean mSnapchatSpoofEnabled = false;
+    private volatile boolean mTensorSpoofEnabled   = false;
+    private volatile boolean mPerAppSpoofEnabled   = true;
+    private volatile boolean mObserverInstalled    = false;
+    private volatile String  mLastProcessName;
 
     private PixelPropsSpoofService() {}
 
@@ -161,22 +212,65 @@ public final class PixelPropsSpoofService {
     }
 
     /**
-     * Apply Build-field overrides for {@code packageName} if the Mistify UI
-     * has configured a profile for it. Caller is responsible for ensuring
-     * this is invoked once during process startup. Skips packages owned by
-     * the AxionAOSP PIF and game-spoof services.
+     * Apply Build-field overrides for {@code packageName}. Idempotent —
+     * safe to call multiple times from the same process. No-op on isolated
+     * processes, custom forks, and packages owned by other spoof services.
      *
      * @hide
      */
     public void spoofForPackage(String packageName) {
+        if (PixelPropsUtils.isCustomForkBuild()) {
+            if (DEBUG) Log.d(TAG, "custom fork → no spoof");
+            return;
+        }
+        if (Process.isIsolated()) {
+            if (DEBUG) Log.d(TAG, "isolated process → no spoof");
+            return;
+        }
         if (TextUtils.isEmpty(packageName)) return;
         if (isAxionOwned(packageName)) return;
         if (isGameSpoofed(packageName)) return;
+        if (CUSTOM_GOOGLE_CAMERA_PACKAGES.contains(packageName)) return;
+        if (packageName.contains("GoogleCamera")) return;
 
-        final Map<String, String> props = chooseProps(packageName);
-        if (props == null) return;
-        for (Map.Entry<String, String> e : props.entrySet()) {
-            applyField(e.getKey(), e.getValue(), packageName);
+        mLastProcessName = Application.getProcessName();
+        ensureObserverInstalled();
+
+        // Always-on baseline (Build.TYPE=user, Build.TAGS=release-keys).
+        applyProps(GENERIC_PROPS, packageName);
+
+        // 1. Per-app device profile (most specific).
+        final Map<String, String> perAppProfile = lookupPerAppProfile(packageName);
+        if (perAppProfile != null) {
+            applyProps(perAppProfile, packageName);
+            return;
+        }
+
+        // 2. Snapchat shortcut.
+        if (PACKAGE_SNAPCHAT.equals(packageName) && mSnapchatSpoofEnabled) {
+            applyProps(PIXEL_XL_PROPS, packageName);
+            return;
+        }
+
+        // 3. SettingsIntelligence: just set FINGERPRINT to a non-spoofed value
+        //    so search indexing doesn't get confused.
+        if (PACKAGE_SI.equals(packageName)) {
+            applyField("FINGERPRINT", String.valueOf(Build.TIME), packageName);
+            return;
+        }
+
+        // 4. ARCore: keep the real device fingerprint so AR features work.
+        if (PACKAGE_ARCORE.equals(packageName)) {
+            applyField("FINGERPRINT", sDeviceFingerprint, packageName);
+            return;
+        }
+
+        // 5. Curated list — recent-Pixel preset, tablet variant on tablets.
+        //    Skipped on mainline Pixel devices (we already are the device).
+        if (mPpSpoofEnabled
+                && CURATED_RECENT_PIXEL_PACKAGES.contains(packageName)
+                && !PixelPropsUtils.isMainlinePixelDevice()) {
+            applyProps(isDeviceTablet() ? PIXEL_TABLET_PROPS : RECENT_PIXEL_PROPS, packageName);
         }
     }
 
@@ -189,7 +283,7 @@ public final class PixelPropsSpoofService {
      */
     public Boolean hasTensorFeature(String name) {
         if (name == null) return null;
-        if (!isTensorSpoofEnabled()) return null;
+        if (!mTensorSpoofEnabled) return null;
         final String pkg = ActivityThread.currentPackageName();
         if (pkg == null) return null;
         if (!getTensorTargets().contains(pkg)) return null;
@@ -197,25 +291,26 @@ public final class PixelPropsSpoofService {
         return null;
     }
 
-    // ---- selection -------------------------------------------------------
+    // ---- non-invasiveness ------------------------------------------------
 
-    private Map<String, String> chooseProps(String packageName) {
-        // Per-app user-defined profile takes precedence.
-        final Map<String, String> profile = lookupPerAppProfile(packageName);
-        if (profile != null) return profile;
-
-        if (PACKAGE_SNAPCHAT.equals(packageName) && isSnapchatSpoofEnabled()) {
-            return PIXEL_XL_PROPS;
-        }
-
-        if (isMasterSpoofEnabled() && CURATED_RECENT_PIXEL_PACKAGES.contains(packageName)) {
-            return RECENT_PIXEL_PROPS;
-        }
-        return null;
+    private static boolean isAxionOwned(String packageName) {
+        return PACKAGE_VENDING.equals(packageName)
+                || PACKAGE_DROIDGUARD.equals(packageName)
+                || PACKAGE_PHOTOS.equals(packageName);
     }
 
+    private static boolean isGameSpoofed(String packageName) {
+        try {
+            return GamePropsSpoofService.getInstance().hasConfigForPackage(packageName);
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    // ---- per-app device profile -----------------------------------------
+
     private Map<String, String> lookupPerAppProfile(String packageName) {
-        if (!isPerAppSpoofEnabled()) return null;
+        if (!mPerAppSpoofEnabled) return null;
         final ContentResolver cr = getResolver();
         if (cr == null) return null;
 
@@ -248,7 +343,7 @@ public final class PixelPropsSpoofService {
             for (int i = 0; i < arr.length(); i++) {
                 final JSONObject o = arr.getJSONObject(i);
                 if (!profileId.equals(o.optString("id"))) continue;
-                final Map<String, String> p = new HashMap<>();
+                final Map<String, String> p = new LinkedHashMap<>();
                 putIfPresent(p, "BRAND",        o.optString("brand"));
                 putIfPresent(p, "MANUFACTURER", o.optString("manufacturer"));
                 putIfPresent(p, "DEVICE",       o.optString("device"));
@@ -267,38 +362,58 @@ public final class PixelPropsSpoofService {
         if (!TextUtils.isEmpty(value)) dst.put(key, value);
     }
 
-    // ---- non-invasiveness ------------------------------------------------
+    // ---- settings observer & cached toggles -----------------------------
 
-    private static boolean isAxionOwned(String packageName) {
-        return PACKAGE_VENDING.equals(packageName)
-                || PACKAGE_DROIDGUARD.equals(packageName)
-                || PACKAGE_PHOTOS.equals(packageName);
-    }
-
-    private static boolean isGameSpoofed(String packageName) {
-        try {
-            return GamePropsSpoofService.getInstance().hasConfigForPackage(packageName);
-        } catch (Throwable t) {
-            return false;
+    private void ensureObserverInstalled() {
+        if (mObserverInstalled) return;
+        synchronized (this) {
+            if (mObserverInstalled) return;
+            final ContentResolver cr = getResolver();
+            if (cr == null) {
+                refreshCachedToggles();
+                return;
+            }
+            final ContentObserver observer = new ContentObserver(null) {
+                @Override public void onChange(boolean selfChange, Uri uri) {
+                    refreshCachedToggles();
+                }
+            };
+            try {
+                cr.registerContentObserver(
+                        Settings.Secure.getUriFor(Settings.Secure.PI_PP_SPOOF),
+                        false, observer);
+                cr.registerContentObserver(
+                        Settings.Secure.getUriFor(Settings.Secure.PI_SNAPCHAT_SPOOF),
+                        false, observer);
+                cr.registerContentObserver(
+                        Settings.Secure.getUriFor(Settings.Secure.PI_TENSOR_SPOOF),
+                        false, observer);
+                cr.registerContentObserver(
+                        Settings.Secure.getUriFor(Settings.Secure.PER_APPS_DEVICE_SPOOF_ENABLED),
+                        false, observer);
+                mObserverInstalled = true;
+            } catch (Throwable t) {
+                // Stay at safe defaults; per-call reads will still work.
+            }
+            refreshCachedToggles();
         }
     }
 
-    // ---- Settings.Secure readers ----------------------------------------
-
-    private boolean isMasterSpoofEnabled() {
-        return getSecureInt(Settings.Secure.PI_PP_SPOOF, 1) == 1;
-    }
-
-    private boolean isSnapchatSpoofEnabled() {
-        return getSecureInt(Settings.Secure.PI_SNAPCHAT_SPOOF, 0) == 1;
-    }
-
-    private boolean isPerAppSpoofEnabled() {
-        return getSecureInt(Settings.Secure.PER_APPS_DEVICE_SPOOF_ENABLED, 1) == 1;
-    }
-
-    private boolean isTensorSpoofEnabled() {
-        return getSecureInt(Settings.Secure.PI_TENSOR_SPOOF, 0) == 1;
+    private void refreshCachedToggles() {
+        final ContentResolver cr = getResolver();
+        if (cr == null) return;
+        try {
+            mPpSpoofEnabled =
+                    Settings.Secure.getInt(cr, Settings.Secure.PI_PP_SPOOF, 1) == 1;
+            mSnapchatSpoofEnabled =
+                    Settings.Secure.getInt(cr, Settings.Secure.PI_SNAPCHAT_SPOOF, 0) == 1;
+            mTensorSpoofEnabled =
+                    Settings.Secure.getInt(cr, Settings.Secure.PI_TENSOR_SPOOF, 0) == 1;
+            mPerAppSpoofEnabled =
+                    Settings.Secure.getInt(cr, Settings.Secure.PER_APPS_DEVICE_SPOOF_ENABLED, 1) == 1;
+        } catch (Throwable t) {
+            // Cache stays at last known good values.
+        }
     }
 
     private Set<String> getTensorTargets() {
@@ -308,26 +423,41 @@ public final class PixelPropsSpoofService {
         if (TextUtils.isEmpty(csv)) return Collections.emptySet();
         final Set<String> out = new HashSet<>();
         for (String p : csv.split(",")) {
-            if (!p.isEmpty()) out.add(p.trim());
+            final String t = p.trim();
+            if (!t.isEmpty()) out.add(t);
         }
         return out;
-    }
-
-    private int getSecureInt(String key, int defaultValue) {
-        final ContentResolver cr = getResolver();
-        if (cr == null) return defaultValue;
-        return Settings.Secure.getInt(cr, key, defaultValue);
     }
 
     private static ContentResolver getResolver() {
         final ActivityThread at = ActivityThread.currentActivityThread();
         if (at == null) return null;
-        final android.app.Application app = at.getApplication();
+        final Application app = at.getApplication();
         if (app == null) return null;
         return app.getContentResolver();
     }
 
+    // ---- tablet detection -----------------------------------------------
+
+    private static boolean isDeviceTablet() {
+        try {
+            final Resources r = Resources.getSystem();
+            if (r == null) return false;
+            final Configuration c = r.getConfiguration();
+            if (c == null) return false;
+            return c.smallestScreenWidthDp >= 600;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
     // ---- Build-field reflection -----------------------------------------
+
+    private static void applyProps(Map<String, String> props, String packageName) {
+        for (Map.Entry<String, String> e : props.entrySet()) {
+            applyField(e.getKey(), e.getValue(), packageName);
+        }
+    }
 
     private static void applyField(String fieldName, String value, String packageName) {
         if (TextUtils.isEmpty(value)) return;
@@ -344,6 +474,7 @@ public final class PixelPropsSpoofService {
             else if (type == boolean.class) boxed = Boolean.parseBoolean(value);
             else return;
             field.set(null, boxed);
+            if (DEBUG) Log.d(TAG, "[" + packageName + "] " + fieldName + " = " + value);
         } catch (Exception e) {
             Log.w(TAG, "Failed to spoof " + fieldName + " for " + packageName, e);
         }
