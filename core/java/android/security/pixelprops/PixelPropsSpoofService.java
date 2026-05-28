@@ -88,8 +88,19 @@ public final class PixelPropsSpoofService {
     private static final Set<String> CURATED_RECENT_PIXEL_PACKAGES;
     /** Google-Camera-clone packages that opt out of all build-field spoofing. */
     private static final Set<String> CUSTOM_GOOGLE_CAMERA_PACKAGES;
+    /** PRELOAD / EXPERIENCE / GOOGLE strings spoofed for privileged Google packages. */
+    private static final Set<String> FEATURES_PIXEL;
+    /** Always-true features for privileged Google packages. */
+    private static final Set<String> FEATURES_PIXEL_OTHERS;
     /** PIXEL_*_EXPERIENCE strings that look like Tensor-only features. */
-    private static final Set<String> TENSOR_FEATURE_NAMES;
+    private static final Set<String> FEATURES_TENSOR;
+    /** Nexus / Pixel-XL preload feature strings. */
+    private static final Set<String> FEATURES_NEXUS;
+    /** Privileged Google packages that get the PRIV_PKGS feature treatment. */
+    private static final Set<String> PRIV_PKGS;
+    /** Codenames of real Tensor-SoC Pixels — suppresses forced Tensor spoof. */
+    private static final Set<String> TENSOR_CODENAMES;
+    private static final boolean IS_TENSOR_DEVICE;
 
     static {
         Map<String, String> generic = new LinkedHashMap<>();
@@ -177,7 +188,42 @@ public final class PixelPropsSpoofService {
                         "com.google.android.apps.cameralite"
                 )));
 
-        TENSOR_FEATURE_NAMES = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
+        FEATURES_PIXEL = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
+                "com.google.android.apps.photos.PIXEL_2019_PRELOAD",
+                "com.google.android.apps.photos.PIXEL_2019_MIDYEAR_PRELOAD",
+                "com.google.android.apps.photos.PIXEL_2018_PRELOAD",
+                "com.google.android.apps.photos.PIXEL_2017_PRELOAD",
+                "com.google.android.feature.PIXEL_2021_MIDYEAR_EXPERIENCE",
+                "com.google.android.feature.PIXEL_2020_EXPERIENCE",
+                "com.google.android.feature.PIXEL_2020_MIDYEAR_EXPERIENCE",
+                "com.google.android.feature.PIXEL_2019_EXPERIENCE",
+                "com.google.android.feature.PIXEL_2019_MIDYEAR_EXPERIENCE",
+                "com.google.android.feature.PIXEL_2018_EXPERIENCE",
+                "com.google.android.feature.PIXEL_2017_EXPERIENCE",
+                "com.google.android.feature.PIXEL_EXPERIENCE",
+                "com.google.android.feature.GOOGLE_BUILD",
+                "com.google.android.feature.GOOGLE_EXPERIENCE"
+        )));
+
+        FEATURES_PIXEL_OTHERS = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
+                "com.google.android.feature.ASI",
+                "com.google.android.feature.ANDROID_ONE_EXPERIENCE",
+                "com.google.android.feature.GOOGLE_FI_BUNDLED",
+                "com.google.android.feature.LILY_EXPERIENCE",
+                "com.google.android.feature.TURBO_PRELOAD",
+                "com.google.android.feature.WELLBEING",
+                "com.google.lens.feature.IMAGE_INTEGRATION",
+                "com.google.lens.feature.CAMERA_INTEGRATION",
+                "com.google.photos.trust_debug_certs",
+                "com.google.android.feature.AER_OPTIMIZED",
+                "com.google.android.feature.NEXT_GENERATION_ASSISTANT",
+                "android.software.game_service",
+                "com.google.android.feature.EXCHANGE_6_2",
+                "com.google.android.apps.dialer.call_recording_audio",
+                "com.google.android.apps.dialer.SUPPORTED"
+        )));
+
+        FEATURES_TENSOR = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
                 "com.google.android.feature.PIXEL_2026_EXPERIENCE",
                 "com.google.android.feature.PIXEL_2026_MIDYEAR_EXPERIENCE",
                 "com.google.android.feature.PIXEL_2025_EXPERIENCE",
@@ -190,6 +236,36 @@ public final class PixelPropsSpoofService {
                 "com.google.android.feature.PIXEL_2022_MIDYEAR_EXPERIENCE",
                 "com.google.android.feature.PIXEL_2021_EXPERIENCE"
         )));
+
+        FEATURES_NEXUS = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
+                "com.google.android.apps.photos.NEXUS_PRELOAD",
+                "com.google.android.apps.photos.nexus_preload",
+                "com.google.android.feature.PIXEL_EXPERIENCE",
+                "com.google.android.feature.GOOGLE_BUILD",
+                "com.google.android.feature.GOOGLE_EXPERIENCE"
+        )));
+
+        PRIV_PKGS = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
+                "com.google.android.googlequicksearchbox",
+                "com.google.android.apps.photos",
+                "com.google.android.apps.pixel.agent",
+                "com.google.android.apps.pixel.creativeassistant"
+        )));
+
+        TENSOR_CODENAMES = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
+                "stallion", "blazer", "frankel", "mustang", "tegu", "comet",
+                "komodo", "caiman", "tokay", "akita", "husky", "shiba", "felix",
+                "tangorpro", "lynx", "cheetah", "panther", "bluejay", "oriole",
+                "raven"
+        )));
+
+        // Prefer ro.evolution.device for back-compat with builds carried over
+        // from Evolution-X; fall back to the standard ro.product.device.
+        String device = SystemProperties.get("ro.evolution.device", "");
+        if (device == null || device.isEmpty()) {
+            device = SystemProperties.get("ro.product.device", "");
+        }
+        IS_TENSOR_DEVICE = TENSOR_CODENAMES.contains(device);
     }
 
     private static volatile PixelPropsSpoofService sInstance;
@@ -199,8 +275,10 @@ public final class PixelPropsSpoofService {
     private volatile boolean mPpSpoofEnabled       = true;
     private volatile boolean mSnapchatSpoofEnabled = false;
     private volatile boolean mTensorSpoofEnabled   = false;
+    private volatile boolean mPhotosSpoofEnabled   = true;
     private volatile boolean mPerAppSpoofEnabled   = true;
     private volatile boolean mObserverInstalled    = false;
+    private volatile Set<String> mTensorTargetsCache = Collections.emptySet();
     private volatile String  mLastProcessName;
 
     private PixelPropsSpoofService() {}
@@ -275,20 +353,81 @@ public final class PixelPropsSpoofService {
     }
 
     /**
-     * Returns {@code Boolean.TRUE} if Tensor-feature spoofing is on for the
-     * caller's package and {@code name} is one of the PIXEL_*_EXPERIENCE
-     * strings, or {@code null} when this service has nothing to say.
+     * Returns the spoofed answer for {@link android.content.pm.PackageManager#hasSystemFeature}
+     * or {@code null} when this service has no opinion (caller should fall
+     * through to the regular feature lookup).
+     *
+     * <p>Mirrors the 16.2 inline logic that lived in
+     * {@code ApplicationPackageManager.hasSystemFeature}:
+     * <ul>
+     *   <li>For privileged Google packages (search box, photos, pixel agent
+     *       / creative assistant) returns spoofed answers from the four
+     *       feature buckets. Photos with the photo-spoof toggle on flips
+     *       PIXEL / TENSOR features to {@code false} (Pixel XL identity)
+     *       while keeping OTHERS / NEXUS {@code true}.</li>
+     *   <li>For any package querying a Tensor feature, returns
+     *       {@code Boolean.TRUE} when the tensor toggle is on, the device
+     *       isn't a real Tensor Pixel, and the package is in the tensor
+     *       targets list. {@code null} otherwise (so the system answers
+     *       honestly).</li>
+     *   <li>For any package querying a baseline Pixel / OTHERS feature,
+     *       returns {@code Boolean.TRUE} so apps see a Pixel-ish device.</li>
+     * </ul>
      *
      * @hide
      */
-    public Boolean hasTensorFeature(String name) {
+    public Boolean checkSystemFeature(String name) {
         if (name == null) return null;
+
+        final String pkg = ActivityThread.currentPackageName();
+
+        if (pkg != null && PRIV_PKGS.contains(pkg)) {
+            final boolean photosSpoof = !Process.isIsolated()
+                    && PACKAGE_PHOTOS.equals(pkg)
+                    && mPhotosSpoofEnabled;
+            if (photosSpoof) {
+                if (FEATURES_PIXEL.contains(name))        return Boolean.FALSE;
+                if (FEATURES_PIXEL_OTHERS.contains(name)) return Boolean.TRUE;
+                if (FEATURES_TENSOR.contains(name))       return Boolean.FALSE;
+                if (FEATURES_NEXUS.contains(name))        return Boolean.TRUE;
+            } else {
+                if (FEATURES_PIXEL.contains(name))        return Boolean.TRUE;
+                if (FEATURES_PIXEL_OTHERS.contains(name)) return Boolean.TRUE;
+                if (FEATURES_TENSOR.contains(name))       return Boolean.TRUE;
+                if (FEATURES_NEXUS.contains(name))        return Boolean.TRUE;
+            }
+        }
+
+        if (FEATURES_TENSOR.contains(name)) {
+            if (IS_TENSOR_DEVICE) return null; // real Tensor Pixel; let system answer.
+            if (mTensorSpoofEnabled
+                    && pkg != null
+                    && mTensorTargetsCache.contains(pkg)) {
+                return Boolean.TRUE;
+            }
+            return null;
+        }
+
+        if (FEATURES_PIXEL.contains(name))        return Boolean.TRUE;
+        if (FEATURES_PIXEL_OTHERS.contains(name)) return Boolean.TRUE;
+        return null;
+    }
+
+    /**
+     * Returns the set of Tensor feature strings to splice into the result of
+     * {@link android.content.pm.PackageManager#getSystemAvailableFeatures}
+     * for the current process, or {@code null} when nothing should be
+     * injected.
+     *
+     * @hide
+     */
+    public Set<String> tensorFeaturesToInject() {
+        if (IS_TENSOR_DEVICE) return null;
         if (!mTensorSpoofEnabled) return null;
         final String pkg = ActivityThread.currentPackageName();
         if (pkg == null) return null;
-        if (!getTensorTargets().contains(pkg)) return null;
-        if (TENSOR_FEATURE_NAMES.contains(name)) return Boolean.TRUE;
-        return null;
+        if (!mTensorTargetsCache.contains(pkg)) return null;
+        return FEATURES_TENSOR;
     }
 
     // ---- non-invasiveness ------------------------------------------------
@@ -389,7 +528,13 @@ public final class PixelPropsSpoofService {
                         Settings.Secure.getUriFor(Settings.Secure.PI_TENSOR_SPOOF),
                         false, observer);
                 cr.registerContentObserver(
+                        Settings.Secure.getUriFor(Settings.Secure.PI_PHOTOS_SPOOF),
+                        false, observer);
+                cr.registerContentObserver(
                         Settings.Secure.getUriFor(Settings.Secure.PER_APPS_DEVICE_SPOOF_ENABLED),
+                        false, observer);
+                cr.registerContentObserver(
+                        Settings.Secure.getUriFor(TENSOR_TARGETS_KEY),
                         false, observer);
                 mObserverInstalled = true;
             } catch (Throwable t) {
@@ -409,24 +554,24 @@ public final class PixelPropsSpoofService {
                     Settings.Secure.getInt(cr, Settings.Secure.PI_SNAPCHAT_SPOOF, 0) == 1;
             mTensorSpoofEnabled =
                     Settings.Secure.getInt(cr, Settings.Secure.PI_TENSOR_SPOOF, 0) == 1;
+            mPhotosSpoofEnabled =
+                    Settings.Secure.getInt(cr, Settings.Secure.PI_PHOTOS_SPOOF, 1) == 1;
             mPerAppSpoofEnabled =
                     Settings.Secure.getInt(cr, Settings.Secure.PER_APPS_DEVICE_SPOOF_ENABLED, 1) == 1;
+            final String csv = Settings.Secure.getString(cr, TENSOR_TARGETS_KEY);
+            if (TextUtils.isEmpty(csv)) {
+                mTensorTargetsCache = Collections.emptySet();
+            } else {
+                final Set<String> out = new HashSet<>();
+                for (String p : csv.split(",")) {
+                    final String t = p.trim();
+                    if (!t.isEmpty()) out.add(t);
+                }
+                mTensorTargetsCache = Collections.unmodifiableSet(out);
+            }
         } catch (Throwable t) {
             // Cache stays at last known good values.
         }
-    }
-
-    private Set<String> getTensorTargets() {
-        final ContentResolver cr = getResolver();
-        if (cr == null) return Collections.emptySet();
-        final String csv = Settings.Secure.getString(cr, TENSOR_TARGETS_KEY);
-        if (TextUtils.isEmpty(csv)) return Collections.emptySet();
-        final Set<String> out = new HashSet<>();
-        for (String p : csv.split(",")) {
-            final String t = p.trim();
-            if (!t.isEmpty()) out.add(t);
-        }
-        return out;
     }
 
     private static ContentResolver getResolver() {

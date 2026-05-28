@@ -792,12 +792,35 @@ public class ApplicationPackageManager extends PackageManager {
             if (parceledList == null) {
                 return new FeatureInfo[0];
             }
-            final List<FeatureInfo> list = parceledList.getList();
-            final FeatureInfo[] res = new FeatureInfo[list.size()];
-            for (int i = 0; i < res.length; i++) {
-                res[i] = list.get(i);
+            final java.util.Set<String> injectTensor =
+                    android.security.pixelprops.PixelPropsSpoofService.getInstance()
+                            .tensorFeaturesToInject();
+            if (injectTensor == null || injectTensor.isEmpty()) {
+                final List<FeatureInfo> list = parceledList.getList();
+                final FeatureInfo[] res = new FeatureInfo[list.size()];
+                for (int i = 0; i < res.length; i++) {
+                    res[i] = list.get(i);
+                }
+                return res;
             }
-            return res;
+            // Tensor-spoof on: splice the FEATURES_TENSOR strings in if
+            // they aren't already present in the base list.
+            final List<FeatureInfo> base = parceledList.getList();
+            final java.util.ArrayList<FeatureInfo> merged =
+                    new java.util.ArrayList<>(base.size() + injectTensor.size());
+            final java.util.HashSet<String> present = new java.util.HashSet<>();
+            for (FeatureInfo fi : base) {
+                merged.add(fi);
+                if (fi != null && fi.name != null) present.add(fi.name);
+            }
+            for (String feature : injectTensor) {
+                if (present.contains(feature)) continue;
+                final FeatureInfo fi = new FeatureInfo();
+                fi.name = feature;
+                fi.version = 0;
+                merged.add(fi);
+            }
+            return merged.toArray(new FeatureInfo[0]);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -852,11 +875,11 @@ public class ApplicationPackageManager extends PackageManager {
             return spoofedResult;
         }
 
-        Boolean tensorSpoof =
+        Boolean pixelPropsSpoof =
                 android.security.pixelprops.PixelPropsSpoofService.getInstance()
-                        .hasTensorFeature(name);
-        if (tensorSpoof != null) {
-            return tensorSpoof;
+                        .checkSystemFeature(name);
+        if (pixelPropsSpoof != null) {
+            return pixelPropsSpoof;
         }
 
         Boolean maybeHasSystemFeature = RoSystemFeatures.maybeHasFeature(name, version);
