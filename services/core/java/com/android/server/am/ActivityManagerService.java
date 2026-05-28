@@ -19883,6 +19883,24 @@ public class ActivityManagerService extends IActivityManager.Stub
         return mActivityTaskManager.shouldForceCutoutFullscreen(packageName);
     }
 
+    private volatile boolean mThreeFingersSwipeEnabled;
+    private volatile boolean mThreeFingerGestureActive;
+
+    @Override
+    public boolean isThreeFingersSwipeActive() {
+        return mThreeFingersSwipeEnabled && mThreeFingerGestureActive;
+    }
+
+    @Override
+    public void setThreeFingersSwipeActive(boolean active) {
+        mThreeFingersSwipeEnabled = active;
+    }
+
+    @Override
+    public void setThreeGestureStateActive(boolean active) {
+        mThreeFingerGestureActive = active;
+    }
+
     @Override
     public void compactAllSystem() {
         mHandler.post(() -> {
