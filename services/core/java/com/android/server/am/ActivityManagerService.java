@@ -8546,10 +8546,7 @@ public class ActivityManagerService extends IActivityManager.Stub
                 // promote to FIFO now
                 if (proc.getCurrentSchedulingGroup() == ProcessList.SCHED_GROUP_TOP_APP) {
                     if (DEBUG_OOM_ADJ) Slog.d("UI_FIFO", "Promoting " + tid + "out of band");
-                    if (proc.useRoundRobinUiScheduling()) {
-                        setThreadScheduler(proc.getRenderThreadTid(),
-                                SCHED_RR | SCHED_RESET_ON_FORK, 1);
-                    } else if (proc.useFifoUiScheduling()) {
+                    if (proc.useFifoUiScheduling()) {
                         setThreadScheduler(proc.getRenderThreadTid(),
                                 SCHED_FIFO | SCHED_RESET_ON_FORK, 1);
                     } else {
@@ -19879,6 +19876,15 @@ public class ActivityManagerService extends IActivityManager.Stub
             });
             killed++;
         }
+    }
+
+    @Override
+    public void compactAllSystem() {
+        mHandler.post(() -> {
+            synchronized (mProcLock) {
+                mCachedAppOptimizer.compactAllSystem();
+            }
+        });
     }
 
     @Override
