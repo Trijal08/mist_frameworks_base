@@ -34,9 +34,29 @@ public final class AttestationUtils {
 
     public static byte[] getBootKey() {
         if (sBootKey == null) {
-            sBootKey = generateRandomBytes(32);
+            // verifiedBootKey is the digest of the vbmeta signing public key. Seeding it from
+            // the real device value (when the bootloader exposes it) keeps the forged
+            // RootOfTrust self-consistent instead of pairing the boot hash with an unrelated
+            // random blob. Falls back to random when the property is unavailable.
+            sBootKey = getBootKeyFromProp();
+            if (sBootKey == null) {
+                sBootKey = generateRandomBytes(32);
+            }
         }
         return sBootKey;
+    }
+
+    public static byte[] getBootKeyFromProp() {
+        String digest = SystemProperties.get("ro.boot.vbmeta.public_key_digest", null);
+        if (digest == null || digest.isEmpty() || digest.length() != 64) {
+            return null;
+        }
+        try {
+            return hexStringToByteArray(digest);
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to parse vbmeta.public_key_digest", e);
+            return null;
+        }
     }
 
     public static byte[] getBootHash() {
@@ -246,6 +266,48 @@ public final class AttestationUtils {
             Log.e(TAG, "Failed to parse patch level: " + value, e);
         }
         return null;
+    }
+
+    /** RootOfTrust patch-level resolution outcome: keep the certificate's original value. */
+    public static final String PATCH_KEEP = "device_default";
+    /** RootOfTrust patch-level resolution outcome: omit the tag entirely. */
+    public static final String PATCH_OMIT = "no";
+
+    /**
+     * Resolve a configured patch-level token into a concrete instruction, mirroring
+     * TEESimulator's security_patch.txt semantics:
+     * <ul>
+     *   <li>null / empty -&gt; null (no config; forge the device's real patch date)</li>
+     *   <li>device_default -&gt; {@link #PATCH_KEEP} (leave the certificate's value untouched)</li>
+     *   <li>no / prop -&gt; {@link #PATCH_OMIT} (drop the tag)</li>
+     *   <li>today -&gt; the current date as YYYY-MM-DD</li>
+     *   <li>templates with YYYY/MM/DD placeholders -&gt; filled with today's parts</li>
+     *   <li>anything else -&gt; returned trimmed, as-is (e.g. a static 2025-11-05)</li>
+     * </ul>
+     */
+    public static String resolvePatchToken(String value) {
+        if (value == null) {
+            return null;
+        }
+        String v = value.trim();
+        if (v.isEmpty()) {
+            return null;
+        }
+        String lower = v.toLowerCase();
+        if (lower.equals("device_default")) {
+            return PATCH_KEEP;
+        }
+        if (lower.equals("no") || lower.equals("prop")) {
+            return PATCH_OMIT;
+        }
+        java.time.LocalDate now = java.time.LocalDate.now();
+        if (lower.equals("today")) {
+            return String.format("%04d-%02d-%02d",
+                    now.getYear(), now.getMonthValue(), now.getDayOfMonth());
+        }
+        return v.replace("YYYY", String.format("%04d", now.getYear()))
+                .replace("MM", String.format("%02d", now.getMonthValue()))
+                .replace("DD", String.format("%02d", now.getDayOfMonth()));
     }
 
     public static int convertPatchLevel(String patchString, boolean isLong) {

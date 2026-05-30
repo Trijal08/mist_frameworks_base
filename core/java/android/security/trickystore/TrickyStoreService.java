@@ -31,6 +31,8 @@ import java.security.KeyPairGenerator;
 import java.security.KeyStore;
 import java.security.spec.ECGenParameterSpec;
 import java.util.Base64;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -49,6 +51,7 @@ public class TrickyStoreService {
 
     private volatile Boolean mTeeBroken = null;
     private volatile CustomPatchLevel mCustomPatchLevel = null;
+    private final Map<String, CustomPatchLevel> mPackagePatchLevels = new ConcurrentHashMap<>();
     private volatile String mLastKeyboxFingerprint = null;
 
     private final KeyBoxManager mKeyBoxManager;
@@ -233,6 +236,7 @@ public class TrickyStoreService {
         String content = fetchFromAms(am -> am.getSpoofTrickyStorePatch());
         if (content == null || content.isEmpty()) {
             mCustomPatchLevel = null;
+            mPackagePatchLevels.clear();
             return;
         }
 
@@ -249,41 +253,63 @@ public class TrickyStoreService {
     }
 
     private void parsePatchText(String content) {
-        StringBuilder filtered = new StringBuilder();
+        mPackagePatchLevels.clear();
+        // Collect key=value pairs per section, mirroring TEESimulator's security_patch.txt:
+        // lines before any "[pkg]" header are global; a "[pkg]" header starts a per-package
+        // override block that applies until the next header.
+        Map<String, Map<String, String>> sections = new LinkedHashMap<>();
+        sections.put("", new HashMap<>());
+        String current = "";
+        String shorthand = null;
+
         for (String raw : content.split("\n")) {
             String line = raw.trim();
-            if (!line.isEmpty() && !line.startsWith("#")) {
-                filtered.append(line).append("\n");
+            if (line.isEmpty() || line.startsWith("#")) {
+                continue;
             }
-        }
-
-        String lines = filtered.toString().trim();
-        if (lines.isEmpty()) {
-            mCustomPatchLevel = null;
-            return;
-        }
-
-        String[] parts = lines.split("\n");
-        if (parts.length == 1 && !parts[0].contains("=")) {
-            mCustomPatchLevel = new CustomPatchLevel(parts[0], parts[0], parts[0], parts[0]);
-            return;
-        }
-
-        String system = null, vendor = null, boot = null, all = null;
-        for (String part : parts) {
-            int idx = part.indexOf('=');
+            if (line.startsWith("[") && line.endsWith("]")) {
+                current = line.substring(1, line.length() - 1).trim();
+                sections.computeIfAbsent(current, k -> new HashMap<>());
+                continue;
+            }
+            int idx = line.indexOf('=');
             if (idx > 0) {
-                String key = part.substring(0, idx).trim().toLowerCase();
-                String value = part.substring(idx + 1).trim();
-                switch (key) {
-                    case "system": system = value; break;
-                    case "vendor": vendor = value; break;
-                    case "boot": boot = value; break;
-                    case "all": all = value; break;
-                }
+                String key = line.substring(0, idx).trim().toLowerCase();
+                String value = line.substring(idx + 1).trim();
+                sections.get(current).put(key, value);
+            } else if (current.isEmpty() && shorthand == null) {
+                // Bare single date in the global section: applies to every component.
+                shorthand = line;
             }
         }
-        mCustomPatchLevel = new CustomPatchLevel(
+
+        Map<String, String> global = sections.get("");
+        if (shorthand != null && global.isEmpty()) {
+            mCustomPatchLevel = new CustomPatchLevel(shorthand, shorthand, shorthand, shorthand);
+        } else {
+            mCustomPatchLevel = buildPatchLevel(global);
+        }
+
+        for (Map.Entry<String, Map<String, String>> entry : sections.entrySet()) {
+            if (entry.getKey().isEmpty()) {
+                continue;
+            }
+            CustomPatchLevel level = buildPatchLevel(entry.getValue());
+            if (level != null) {
+                mPackagePatchLevels.put(entry.getKey(), level);
+            }
+        }
+    }
+
+    private CustomPatchLevel buildPatchLevel(Map<String, String> kv) {
+        if (kv == null || kv.isEmpty()) {
+            return null;
+        }
+        String system = kv.get("system");
+        String vendor = kv.get("vendor");
+        String boot = kv.get("boot");
+        String all = kv.get("all");
+        return new CustomPatchLevel(
             system != null ? system : all,
             vendor != null ? vendor : all,
             boot != null ? boot : all,
@@ -292,6 +318,7 @@ public class TrickyStoreService {
     }
 
     private void parsePatchJson(String content) throws IOException {
+        mPackagePatchLevels.clear();
         String system = null, vendor = null, boot = null, all = null;
         try (JsonReader reader = new JsonReader(new StringReader(content))) {
             reader.beginObject();
@@ -385,6 +412,23 @@ public class TrickyStoreService {
 
     public CustomPatchLevel getCustomPatchLevel() {
         refreshPatchLevel();
+        return mCustomPatchLevel;
+    }
+
+    /**
+     * Resolve the patch-level override for a calling app: the first package with a
+     * per-package {@code [pkg]} section wins, otherwise the global configuration applies.
+     */
+    public CustomPatchLevel getCustomPatchLevel(String[] packages) {
+        refreshPatchLevel();
+        if (packages != null) {
+            for (String pkg : packages) {
+                CustomPatchLevel perApp = mPackagePatchLevels.get(pkg);
+                if (perApp != null) {
+                    return perApp;
+                }
+            }
+        }
         return mCustomPatchLevel;
     }
 

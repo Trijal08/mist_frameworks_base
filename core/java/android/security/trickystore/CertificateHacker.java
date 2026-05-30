@@ -8,6 +8,7 @@ import com.android.internal.org.bouncycastle.asn1.ASN1EncodableVector;
 import com.android.internal.org.bouncycastle.asn1.ASN1Enumerated;
 import com.android.internal.org.bouncycastle.asn1.ASN1Integer;
 import com.android.internal.org.bouncycastle.asn1.ASN1ObjectIdentifier;
+import com.android.internal.org.bouncycastle.asn1.ASN1OctetString;
 import com.android.internal.org.bouncycastle.asn1.ASN1Sequence;
 import com.android.internal.org.bouncycastle.asn1.ASN1TaggedObject;
 import com.android.internal.org.bouncycastle.asn1.DEROctetString;
@@ -45,6 +46,7 @@ import java.security.interfaces.RSAPrivateCrtKey;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -52,6 +54,16 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class CertificateHacker {
     private static final String TAG = "CertificateHacker";
+
+    // KeyMint authorization tag numbers that we forge or rebuild.
+    private static final int TAG_ROOT_OF_TRUST = 704;
+    private static final int TAG_OS_VERSION = 705;
+    private static final int TAG_OS_PATCHLEVEL = 706;
+    private static final int TAG_VENDOR_PATCHLEVEL = 718;
+    private static final int TAG_BOOT_PATCHLEVEL = 719;
+
+    // KeyDescription field index of the teeEnforced authorization list.
+    private static final int TEE_ENFORCED_INDEX = 7;
 
     private static final Map<String, String> sLeafAlgorithms = new ConcurrentHashMap<>();
 
@@ -62,6 +74,10 @@ public final class CertificateHacker {
     }
 
     public static Certificate[] hackCertificateChain(Certificate[] chain) {
+        return hackCertificateChain(chain, null);
+    }
+
+    public static Certificate[] hackCertificateChain(Certificate[] chain, String[] packages) {
         if (chain == null || chain.length == 0) {
             return chain;
         }
@@ -81,19 +97,7 @@ public final class CertificateHacker {
             Extension extension = leafHolder.getExtension(CertificateGenerator.ATTESTATION_OID);
             ASN1Sequence sequence = ASN1Sequence.getInstance(extension.getExtnValue().getOctets());
             ASN1Encodable[] encodables = sequence.toArray();
-            ASN1Sequence teeEnforced = (ASN1Sequence) encodables[7];
-
-            ASN1EncodableVector vector = new ASN1EncodableVector();
-            ASN1Encodable originalRootOfTrust = null;
-
-            for (ASN1Encodable element : teeEnforced) {
-                ASN1TaggedObject taggedObject = (ASN1TaggedObject) element;
-                if (taggedObject.getTagNo() == 704) {
-                    originalRootOfTrust = taggedObject.getBaseObject().toASN1Primitive();
-                } else {
-                    vector.add(taggedObject);
-                }
-            }
+            ASN1Sequence teeEnforced = (ASN1Sequence) encodables[TEE_ENFORCED_INDEX];
 
             String algorithm = leaf.getPublicKey().getAlgorithm();
             KeyBoxManager keyboxManager = TrickyStoreService.getInstance().getKeyBoxManager();
@@ -119,7 +123,9 @@ public final class CertificateHacker {
 
             ContentSigner signer = createBCSigner(leaf.getSigAlgName(), keybox.keyPair.getPrivate());
 
-            Extension hackedExtension = hackAttestExtension(originalRootOfTrust, vector, encodables);
+            TrickyStoreService.CustomPatchLevel patchLevel =
+                TrickyStoreService.getInstance().getCustomPatchLevel(packages);
+            Extension hackedExtension = hackAttestExtension(teeEnforced, encodables, patchLevel);
             builder.addExtension(hackedExtension);
 
             for (Object oid : leafHolder.getExtensions().getExtensionOIDs()) {
@@ -251,54 +257,112 @@ public final class CertificateHacker {
         }
     }
 
+    /**
+     * Rebuild the teeEnforced authorization list with a forged RootOfTrust and patch levels.
+     *
+     * <p>Original tags are indexed by number and re-emitted in ascending order so the result is
+     * DER-canonical, exactly as a genuine KeyMint attestation would be. Patch-level tags are
+     * <em>replaced in place</em> (never duplicated) and honor TEESimulator's keyword semantics.
+     */
     private static Extension hackAttestExtension(
-            ASN1Encodable originalRootOfTrust,
-            ASN1EncodableVector vector,
-            ASN1Encodable[] originalEncodables) throws Exception {
+            ASN1Sequence teeEnforced,
+            ASN1Encodable[] originalEncodables,
+            TrickyStoreService.CustomPatchLevel cpl) throws Exception {
 
-        byte[] bootKey = AttestationUtils.getBootKey();
-        byte[] bootHash = AttestationUtils.getBootHash();
-
-        if (bootHash == null && originalRootOfTrust instanceof ASN1Sequence) {
-            try {
-                ASN1Sequence rot = (ASN1Sequence) originalRootOfTrust;
-                ASN1Encodable hashElement = rot.getObjectAt(3);
-                if (hashElement instanceof DEROctetString) {
-                    bootHash = ((DEROctetString) hashElement).getOctets();
-                }
-            } catch (Exception e) {
-                Log.w(TAG, "Failed to extract boot hash from original", e);
+        TreeMap<Integer, ASN1Encodable> entries = new TreeMap<>();
+        byte[] originalBootHash = null;
+        for (ASN1Encodable element : teeEnforced) {
+            ASN1TaggedObject tagged = (ASN1TaggedObject) element;
+            int tag = tagged.getTagNo();
+            if (tag == TAG_ROOT_OF_TRUST) {
+                originalBootHash = extractBootHash(tagged.getBaseObject().toASN1Primitive());
+                continue;                       // Rebuilt below.
             }
+            entries.put(tag, tagged);
         }
 
+        // RootOfTrust: report a verified, locked device. Prefer the real verified-boot values
+        // (boot key + the original cert's boot hash) so the forged structure stays plausible.
+        byte[] bootKey = AttestationUtils.getBootKey();
+        byte[] bootHash = AttestationUtils.getBootHashFromProp();
+        if (bootHash == null) {
+            bootHash = originalBootHash;
+        }
         if (bootHash == null) {
             bootHash = AttestationUtils.getBootHash();
         }
-
         ASN1Encodable[] rootOfTrustElements = new ASN1Encodable[] {
             new DEROctetString(bootKey),
             ASN1Boolean.TRUE,
             new ASN1Enumerated(0),
             new DEROctetString(bootHash)
         };
-        DERSequence hackedRootOfTrust = new DERSequence(rootOfTrustElements);
+        entries.put(TAG_ROOT_OF_TRUST, new DERTaggedObject(true, TAG_ROOT_OF_TRUST,
+            new DERSequence(rootOfTrustElements)));
 
-        vector.add(new DERTaggedObject(true, 718, 
-            new ASN1Integer(AttestationUtils.getVendorPatchLevel(true))));
-        vector.add(new DERTaggedObject(true, 719, 
-            new ASN1Integer(AttestationUtils.getBootPatchLevel(true))));
-        vector.add(new DERTaggedObject(true, 706, 
-            new ASN1Integer(AttestationUtils.getPatchLevel(false))));
-        vector.add(new DERTaggedObject(true, 705, 
+        // osVersion is device-derived; there is no per-app override for it.
+        entries.put(TAG_OS_VERSION, new DERTaggedObject(true, TAG_OS_VERSION,
             new ASN1Integer(AttestationUtils.getOsVersion())));
-        vector.add(new DERTaggedObject(704, hackedRootOfTrust));
 
+        // Patch levels: osPatchLevel is YYYYMM, vendor/boot are YYYYMMDD.
+        applyPatch(entries, TAG_OS_PATCHLEVEL, cpl == null ? null : cpl.system, false);
+        applyPatch(entries, TAG_VENDOR_PATCHLEVEL, cpl == null ? null : cpl.vendor, true);
+        applyPatch(entries, TAG_BOOT_PATCHLEVEL, cpl == null ? null : cpl.boot, true);
+
+        ASN1EncodableVector vector = new ASN1EncodableVector();
+        for (ASN1Encodable entry : entries.values()) {
+            vector.add(entry);
+        }
         DERSequence hackedEnforced = new DERSequence(vector);
-        originalEncodables[7] = hackedEnforced;
-        DERSequence hackedSequence = new DERSequence(originalEncodables);
+
+        ASN1Encodable[] newEncodables = originalEncodables.clone();
+        newEncodables[TEE_ENFORCED_INDEX] = hackedEnforced;
+        DERSequence hackedSequence = new DERSequence(newEncodables);
         DEROctetString hackedOctets = new DEROctetString(hackedSequence);
 
         return new Extension(CertificateGenerator.ATTESTATION_OID, false, hackedOctets);
+    }
+
+    /**
+     * Apply one patch-level tag according to the resolved token:
+     * <ul>
+     *   <li>{@code null} (no config) -&gt; forge the device's real security patch date</li>
+     *   <li>{@link AttestationUtils#PATCH_KEEP} -&gt; leave the certificate's original value</li>
+     *   <li>{@link AttestationUtils#PATCH_OMIT} -&gt; drop the tag entirely</li>
+     *   <li>a date -&gt; encode and use it</li>
+     * </ul>
+     */
+    private static void applyPatch(TreeMap<Integer, ASN1Encodable> entries,
+            int tag, String token, boolean isLong) {
+        String resolved = AttestationUtils.resolvePatchToken(token);
+        if (AttestationUtils.PATCH_KEEP.equals(resolved)) {
+            return;                             // Keep the original cert value (already mapped).
+        }
+        if (AttestationUtils.PATCH_OMIT.equals(resolved)) {
+            entries.remove(tag);
+            return;
+        }
+        int value = (resolved == null)
+            ? AttestationUtils.convertPatchLevel(android.os.Build.VERSION.SECURITY_PATCH, isLong)
+            : AttestationUtils.convertPatchLevel(resolved, isLong);
+        entries.put(tag, new DERTaggedObject(true, tag, new ASN1Integer(value)));
+    }
+
+    private static byte[] extractBootHash(ASN1Encodable rootOfTrust) {
+        try {
+            if (rootOfTrust instanceof ASN1Sequence) {
+                ASN1Sequence rot = (ASN1Sequence) rootOfTrust;
+                if (rot.size() >= 4) {
+                    ASN1Encodable hashElement = rot.getObjectAt(3);
+                    if (hashElement instanceof ASN1OctetString) {
+                        return ((ASN1OctetString) hashElement).getOctets();
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to extract boot hash from original RootOfTrust", e);
+        }
+        return null;
     }
 
     public static void storeLeafAlgorithm(String alias, int uid, String algorithm) {
