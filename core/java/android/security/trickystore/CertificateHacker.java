@@ -62,7 +62,8 @@ public final class CertificateHacker {
     private static final int TAG_VENDOR_PATCHLEVEL = 718;
     private static final int TAG_BOOT_PATCHLEVEL = 719;
 
-    // KeyDescription field index of the teeEnforced authorization list.
+    // KeyDescription field indices of the softwareEnforced / teeEnforced authorization lists.
+    private static final int SW_ENFORCED_INDEX = 6;
     private static final int TEE_ENFORCED_INDEX = 7;
 
     private static final Map<String, String> sLeafAlgorithms = new ConcurrentHashMap<>();
@@ -97,7 +98,8 @@ public final class CertificateHacker {
             Extension extension = leafHolder.getExtension(CertificateGenerator.ATTESTATION_OID);
             ASN1Sequence sequence = ASN1Sequence.getInstance(extension.getExtnValue().getOctets());
             ASN1Encodable[] encodables = sequence.toArray();
-            ASN1Sequence teeEnforced = (ASN1Sequence) encodables[TEE_ENFORCED_INDEX];
+            int teeIndex = findRootOfTrustIndex(encodables);
+            ASN1Sequence teeEnforced = (ASN1Sequence) encodables[teeIndex];
 
             String algorithm = leaf.getPublicKey().getAlgorithm();
             KeyBoxManager keyboxManager = TrickyStoreService.getInstance().getKeyBoxManager();
@@ -125,7 +127,7 @@ public final class CertificateHacker {
 
             TrickyStoreService.CustomPatchLevel patchLevel =
                 TrickyStoreService.getInstance().getCustomPatchLevel(packages);
-            Extension hackedExtension = hackAttestExtension(teeEnforced, encodables, patchLevel);
+            Extension hackedExtension = hackAttestExtension(teeEnforced, encodables, teeIndex, patchLevel);
             builder.addExtension(hackedExtension);
 
             for (Object oid : leafHolder.getExtensions().getExtensionOIDs()) {
@@ -267,6 +269,7 @@ public final class CertificateHacker {
     private static Extension hackAttestExtension(
             ASN1Sequence teeEnforced,
             ASN1Encodable[] originalEncodables,
+            int teeIndex,
             TrickyStoreService.CustomPatchLevel cpl) throws Exception {
 
         TreeMap<Integer, ASN1Encodable> entries = new TreeMap<>();
@@ -316,7 +319,7 @@ public final class CertificateHacker {
         DERSequence hackedEnforced = new DERSequence(vector);
 
         ASN1Encodable[] newEncodables = originalEncodables.clone();
-        newEncodables[TEE_ENFORCED_INDEX] = hackedEnforced;
+        newEncodables[teeIndex] = hackedEnforced;
         DERSequence hackedSequence = new DERSequence(newEncodables);
         DEROctetString hackedOctets = new DEROctetString(hackedSequence);
 
@@ -346,6 +349,28 @@ public final class CertificateHacker {
             ? AttestationUtils.convertPatchLevel(android.os.Build.VERSION.SECURITY_PATCH, isLong)
             : AttestationUtils.convertPatchLevel(resolved, isLong);
         entries.put(tag, new DERTaggedObject(true, tag, new ASN1Integer(value)));
+    }
+
+    /**
+     * Locate the authorization list that actually carries the RootOfTrust (tag 704). It is
+     * normally the teeEnforced list at index 7, but a few vendor certificates emit the
+     * software/tee lists in the opposite order, so scan both candidate indices and fall back to
+     * the canonical position when neither matches.
+     */
+    private static int findRootOfTrustIndex(ASN1Encodable[] encodables) {
+        for (int i = SW_ENFORCED_INDEX; i <= TEE_ENFORCED_INDEX && i < encodables.length; i++) {
+            try {
+                ASN1Sequence list = (ASN1Sequence) encodables[i];
+                for (ASN1Encodable element : list) {
+                    if (((ASN1TaggedObject) element).getTagNo() == TAG_ROOT_OF_TRUST) {
+                        return i;
+                    }
+                }
+            } catch (Exception ignored) {
+                // Not an auth-list sequence; keep scanning.
+            }
+        }
+        return TEE_ENFORCED_INDEX;
     }
 
     private static byte[] extractBootHash(ASN1Encodable rootOfTrust) {

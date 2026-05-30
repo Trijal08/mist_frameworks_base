@@ -215,6 +215,24 @@ public final class AttestationUtils {
         return attestVersion == 4 ? 41 : attestVersion;
     }
 
+    /**
+     * StrongBox-aware attestation version: a StrongBox attestation is always at least
+     * version 300, mirroring real KeyMint and TEESimulator. {@code securityLevel} is a
+     * {@link android.hardware.security.keymint.SecurityLevel} value.
+     */
+    public static int getAttestVersion(int securityLevel) {
+        int v = getAttestVersion();
+        if (securityLevel == android.hardware.security.keymint.SecurityLevel.STRONGBOX && v < 300) {
+            v = 300;
+        }
+        return v;
+    }
+
+    public static int getKeymasterVersion(int securityLevel) {
+        int attestVersion = getAttestVersion(securityLevel);
+        return attestVersion == 4 ? 41 : attestVersion;
+    }
+
     public static int getPatchLevel(boolean isLong) {
         TrickyStoreService.CustomPatchLevel customLevel = 
             TrickyStoreService.getInstance().getCustomPatchLevel();
@@ -326,13 +344,27 @@ public final class AttestationUtils {
         return 202404;
     }
 
+    /**
+     * The authoritative MODULE_HASH (tag 724) value. keystore2 builds the canonical, DER-encoded
+     * {@code Modules} structure from the running APEX set; the SHA-256 of that exact blob is what a
+     * genuine attestation carries. We query it and hash it rather than re-deriving it from
+     * {@code apex_manifest.pb} ourselves, so the value is byte-identical to a real device's and
+     * tracks the documented boot-to-boot variation.
+     *
+     * @return the 32-byte module hash, or {@code null} if it cannot be obtained (caller omits the tag)
+     */
     public static byte[] computeModuleHash() {
         try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            return digest.digest(new byte[0]);
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to compute module hash", e);
-            return new byte[32];
+            byte[] modules = android.security.KeyStore2.getInstance()
+                    .getSupplementaryAttestationInfo(
+                            android.hardware.security.keymint.Tag.MODULE_HASH);
+            if (modules == null || modules.length == 0) {
+                return null;
+            }
+            return MessageDigest.getInstance("SHA-256").digest(modules);
+        } catch (Throwable e) {
+            Log.w(TAG, "Failed to obtain module hash", e);
+            return null;
         }
     }
 

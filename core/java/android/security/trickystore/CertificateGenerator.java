@@ -47,6 +47,7 @@ import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.TreeMap;
 
 import javax.security.auth.x500.X500Principal;
 
@@ -196,6 +197,8 @@ public final class CertificateGenerator {
 
     private static Extension buildAttestExtension(KeyGenParameters params, int securityLevel, int uid) {
         try {
+            int attestVersion = AttestationUtils.getAttestVersion(securityLevel);
+
             byte[] bootKey = AttestationUtils.getBootKey();
             byte[] bootHash = AttestationUtils.getBootHash();
 
@@ -207,65 +210,76 @@ public final class CertificateGenerator {
             };
             DERSequence rootOfTrust = new DERSequence(rootOfTrustElements);
 
-            ASN1EncodableVector teeEnforced = new ASN1EncodableVector();
+            // Both authorization lists are keyed by tag number so the emitted SEQUENCEs are
+            // DER-canonical (ascending tags), exactly as a genuine KeyMint attestation produces.
+            TreeMap<Integer, ASN1Encodable> teeEnforced = new TreeMap<>();
 
             ASN1Integer[] purposes = new ASN1Integer[params.purpose.size()];
             for (int i = 0; i < params.purpose.size(); i++) {
                 purposes[i] = new ASN1Integer(params.purpose.get(i));
             }
-            teeEnforced.add(new DERTaggedObject(true, 1, new DERSet(purposes)));
-            teeEnforced.add(new DERTaggedObject(true, 2, new ASN1Integer(params.algorithm)));
-            teeEnforced.add(new DERTaggedObject(true, 3, new ASN1Integer(params.keySize)));
+            teeEnforced.put(1, new DERTaggedObject(true, 1, new DERSet(purposes)));
+            teeEnforced.put(2, new DERTaggedObject(true, 2, new ASN1Integer(params.algorithm)));
+            teeEnforced.put(3, new DERTaggedObject(true, 3, new ASN1Integer(params.keySize)));
 
             ASN1Integer[] digests = new ASN1Integer[params.digest.size()];
             for (int i = 0; i < params.digest.size(); i++) {
                 digests[i] = new ASN1Integer(params.digest.get(i));
             }
-            teeEnforced.add(new DERTaggedObject(true, 5, new DERSet(digests)));
+            teeEnforced.put(5, new DERTaggedObject(true, 5, new DERSet(digests)));
 
-            teeEnforced.add(new DERTaggedObject(true, 10, new ASN1Integer(params.ecCurve)));
-            teeEnforced.add(new DERTaggedObject(true, 503, DERNull.INSTANCE));
-            teeEnforced.add(new DERTaggedObject(true, 702, new ASN1Integer(0)));
-            teeEnforced.add(new DERTaggedObject(true, 704, rootOfTrust));
-            teeEnforced.add(new DERTaggedObject(true, 705, new ASN1Integer(AttestationUtils.getOsVersion())));
-            teeEnforced.add(new DERTaggedObject(true, 706, new ASN1Integer(AttestationUtils.getPatchLevel(false))));
-            teeEnforced.add(new DERTaggedObject(true, 718, new ASN1Integer(AttestationUtils.getVendorPatchLevel(true))));
-            teeEnforced.add(new DERTaggedObject(true, 719, new ASN1Integer(AttestationUtils.getBootPatchLevel(true))));
+            teeEnforced.put(10, new DERTaggedObject(true, 10, new ASN1Integer(params.ecCurve)));
+            teeEnforced.put(503, new DERTaggedObject(true, 503, DERNull.INSTANCE));
+            teeEnforced.put(702, new DERTaggedObject(true, 702, new ASN1Integer(0)));
+            teeEnforced.put(704, new DERTaggedObject(true, 704, rootOfTrust));
+            teeEnforced.put(705, new DERTaggedObject(true, 705, new ASN1Integer(AttestationUtils.getOsVersion())));
+            teeEnforced.put(706, new DERTaggedObject(true, 706, new ASN1Integer(AttestationUtils.getPatchLevel(false))));
+            teeEnforced.put(718, new DERTaggedObject(true, 718, new ASN1Integer(AttestationUtils.getVendorPatchLevel(true))));
+            teeEnforced.put(719, new DERTaggedObject(true, 719, new ASN1Integer(AttestationUtils.getBootPatchLevel(true))));
 
             if (params.brand != null) {
-                teeEnforced.add(new DERTaggedObject(true, 710, new DEROctetString(params.brand)));
+                teeEnforced.put(710, new DERTaggedObject(true, 710, new DEROctetString(params.brand)));
             }
             if (params.device != null) {
-                teeEnforced.add(new DERTaggedObject(true, 711, new DEROctetString(params.device)));
+                teeEnforced.put(711, new DERTaggedObject(true, 711, new DEROctetString(params.device)));
             }
             if (params.product != null) {
-                teeEnforced.add(new DERTaggedObject(true, 712, new DEROctetString(params.product)));
+                teeEnforced.put(712, new DERTaggedObject(true, 712, new DEROctetString(params.product)));
             }
             if (params.manufacturer != null) {
-                teeEnforced.add(new DERTaggedObject(true, 716, new DEROctetString(params.manufacturer)));
+                teeEnforced.put(716, new DERTaggedObject(true, 716, new DEROctetString(params.manufacturer)));
             }
             if (params.model != null) {
-                teeEnforced.add(new DERTaggedObject(true, 717, new DEROctetString(params.model)));
+                teeEnforced.put(717, new DERTaggedObject(true, 717, new DEROctetString(params.model)));
             }
 
-            ASN1EncodableVector softwareEnforced = new ASN1EncodableVector();
+            TreeMap<Integer, ASN1Encodable> softwareEnforced = new TreeMap<>();
+            softwareEnforced.put(701,
+                new DERTaggedObject(true, 701, new ASN1Integer(System.currentTimeMillis())));
             try {
                 ASN1OctetString applicationId = createApplicationId(uid);
-                softwareEnforced.add(new DERTaggedObject(true, 709, applicationId));
+                softwareEnforced.put(709, new DERTaggedObject(true, 709, applicationId));
             } catch (Throwable e) {
                  Log.w(TAG, "Failed to create application ID", e);
             }
-            softwareEnforced.add(new DERTaggedObject(true, 701, new ASN1Integer(System.currentTimeMillis())));
+            // MODULE_HASH (724) is part of the attestation record from version 400 (Android 16) on.
+            if (attestVersion >= 400) {
+                byte[] moduleHash = AttestationUtils.computeModuleHash();
+                if (moduleHash != null) {
+                    softwareEnforced.put(724,
+                        new DERTaggedObject(true, 724, new DEROctetString(moduleHash)));
+                }
+            }
 
             ASN1Encodable[] keyDescriptionElements = new ASN1Encodable[] {
-                new ASN1Integer(AttestationUtils.getAttestVersion()),
+                new ASN1Integer(attestVersion),
                 new ASN1Enumerated(securityLevel),
-                new ASN1Integer(AttestationUtils.getKeymasterVersion()),
+                new ASN1Integer(AttestationUtils.getKeymasterVersion(securityLevel)),
                 new ASN1Enumerated(securityLevel),
                 new DEROctetString(params.attestationChallenge != null ? params.attestationChallenge : new byte[0]),
                 new DEROctetString(new byte[0]),
-                new DERSequence(softwareEnforced),
-                new DERSequence(teeEnforced)
+                toSequence(softwareEnforced),
+                toSequence(teeEnforced)
             };
 
             DERSequence keyDescription = new DERSequence(keyDescriptionElements);
@@ -276,6 +290,14 @@ public final class CertificateGenerator {
             Log.e(TAG, "Failed to build attestation extension", e);
             throw new RuntimeException(e);
         }
+    }
+
+    private static DERSequence toSequence(TreeMap<Integer, ASN1Encodable> entries) {
+        ASN1EncodableVector vector = new ASN1EncodableVector();
+        for (ASN1Encodable entry : entries.values()) {
+            vector.add(entry);
+        }
+        return new DERSequence(vector);
     }
 
     private static DEROctetString createApplicationId(int uid) throws Throwable {
